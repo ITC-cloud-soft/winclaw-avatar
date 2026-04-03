@@ -1,0 +1,466 @@
+/* =============================================================================
+   digital-human.css
+   Styles for the Digital Human panel — left / top split pane.
+   All colour and sizing values reference design tokens from base.css.
+   ============================================================================= */
+
+/* =============================================================================
+   Panel root
+   ============================================================================= */
+
+.dh-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg);
+  overflow: hidden;
+  position: relative;
+}
+
+/* =============================================================================
+   Video container
+   ============================================================================= */
+
+.dh-video-container {
+  flex: 1;
+  position: relative;
+  background: #000;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  /* Very subtle inner glow to separate from page bg */
+  box-shadow: inset 0 0 0 1px var(--border);
+  min-height: 0; /* allow flex child to shrink below content size */
+}
+
+.dh-video-container video:not(.camera-pip),
+.dh-video-player-container video:not(.camera-pip) {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* ByteRTC SDK injects its own <video> inside this container div */
+.dh-video-player-container {
+  width: 100%;
+  height: 100%;
+}
+
+/* =============================================================================
+   Connection status badge
+   ============================================================================= */
+
+.dh-status-badge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 20;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  pointer-events: none;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.dh-status-badge--connecting {
+  background: var(--warn-subtle);
+  color: var(--warn);
+  border: 1px solid var(--warn-muted);
+  animation: pulse-subtle 1.6s ease-in-out infinite;
+}
+
+.dh-status-badge--connected {
+  background: var(--ok-subtle);
+  color: var(--ok);
+  border: 1px solid var(--ok-muted);
+}
+
+.dh-status-badge--error {
+  background: var(--danger-subtle);
+  color: var(--danger);
+  border: 1px solid var(--danger-muted);
+}
+
+/* =============================================================================
+   Error overlay
+   ============================================================================= */
+
+.dh-error-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+.dh-error-text {
+  color: var(--danger);
+  background: var(--danger-subtle);
+  border: 1px solid var(--danger-muted);
+  border-radius: var(--radius-md);
+  padding: 12px 20px;
+  font-size: 13px;
+  text-align: center;
+  max-width: 320px;
+}
+
+/* =============================================================================
+   Placeholder (shown when not connected)
+   ============================================================================= */
+
+.dh-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--duration-normal) var(--ease-out);
+}
+
+.dh-placeholder:hover,
+.dh-placeholder:focus-visible {
+  background: rgba(255, 132, 0, 0.06);
+  outline: none;
+}
+
+.dh-placeholder:focus-visible {
+  box-shadow: inset 0 0 0 3px var(--ring);
+}
+
+.dh-avatar-static {
+  width: 120px;
+  height: 120px;
+  border-radius: var(--radius-full);
+  object-fit: cover;
+  border: 3px solid var(--border-strong);
+  box-shadow: var(--shadow-lg), var(--shadow-glow);
+  transition: transform var(--duration-normal) var(--ease-spring),
+              box-shadow var(--duration-normal) var(--ease-out);
+}
+
+.dh-placeholder:hover .dh-avatar-static {
+  transform: scale(1.04);
+  box-shadow: var(--shadow-xl), 0 0 40px var(--accent-glow);
+}
+
+.dh-start-hint {
+  font-size: 13px;
+  color: var(--muted);
+  letter-spacing: 0.01em;
+  padding: 6px 16px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  transition: color var(--duration-fast), border-color var(--duration-fast);
+}
+
+.dh-placeholder:hover .dh-start-hint {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* =============================================================================
+   Camera PiP (picture-in-picture preview)
+   ============================================================================= */
+
+.camera-pip {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  width: 120px;
+  height: 90px;
+  object-fit: cover;
+  border-radius: var(--radius-md);
+  border: 2px solid var(--border-strong);
+  box-shadow: var(--shadow-lg);
+  z-index: 10;
+  background: #000;
+  /* Subtle entrance */
+  animation: scale-in var(--duration-normal) var(--ease-spring);
+}
+
+/* =============================================================================
+   Subtitle area (collapsible)
+   ============================================================================= */
+
+.dh-subtitle {
+  flex-shrink: 0;
+  background: rgba(18, 20, 26, 0.82);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-top: 1px solid var(--border);
+  max-height: 80px;
+  overflow: hidden;
+  transition: max-height 0.3s var(--ease-out), opacity 0.2s ease;
+}
+
+.dh-subtitle.collapsed {
+  max-height: 28px; /* just tall enough to show the toggle button */
+}
+
+.dh-subtitle-inner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 12px;
+}
+
+.dh-subtitle-text {
+  flex: 1;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+  /* Show 3 lines max before collapsing */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.dh-subtitle-empty {
+  /* Invisible placeholder to maintain height */
+  color: transparent;
+  user-select: none;
+}
+
+.dh-subtitle-toggle {
+  flex-shrink: 0;
+  padding: 2px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  transition: color var(--duration-fast), background var(--duration-fast);
+}
+
+.dh-subtitle-toggle:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.dh-subtitle-toggle:focus-visible {
+  box-shadow: var(--focus-ring);
+  outline: none;
+}
+
+/* =============================================================================
+   Control bar
+   ============================================================================= */
+
+.dh-controls {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-accent);
+}
+
+/* =============================================================================
+   DH action buttons
+   ============================================================================= */
+
+.dh-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast),
+    color var(--duration-fast),
+    box-shadow var(--duration-fast);
+}
+
+.dh-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.dh-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* Inactive (default) hover */
+.dh-btn.inactive:hover,
+.dh-btn:not(.active):not(.primary):not(.danger):hover {
+  background: var(--bg-hover);
+  border-color: var(--border-hover);
+}
+
+/* Active state — mic/camera is ON */
+.dh-btn.active {
+  background: var(--accent-subtle);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.dh-btn.active:hover {
+  background: rgba(255, 132, 0, 0.22);
+  border-color: var(--accent-hover);
+}
+
+/* Primary — start session */
+.dh-btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-foreground);
+  padding: 7px 20px;
+  font-weight: 600;
+}
+
+.dh-btn.primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  box-shadow: var(--shadow-glow);
+}
+
+/* Danger — end session */
+.dh-btn.danger {
+  background: var(--danger-subtle);
+  border-color: var(--danger-muted);
+  color: var(--danger);
+}
+
+.dh-btn.danger:hover {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: var(--danger);
+}
+
+/* Button label text */
+.dh-btn-label {
+  line-height: 1;
+}
+
+/* Spinner animation for "connecting" state */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+/* =============================================================================
+   Light theme overrides
+   ============================================================================= */
+
+:root[data-theme="light"] .dh-subtitle {
+  background: rgba(250, 250, 250, 0.88);
+}
+
+:root[data-theme="light"] .dh-error-overlay {
+  background: rgba(255, 255, 255, 0.55);
+}
+
+/* =============================================================================
+   Responsive: portrait (small screen) — PiP gets smaller
+   ============================================================================= */
+
+@media (max-width: 767px), (max-width: 1023px) and (orientation: portrait) {
+  .camera-pip {
+    width: 100px;
+    height: 75px;
+    bottom: 72px;
+  }
+
+  .dh-avatar-static {
+    width: 88px;
+    height: 88px;
+  }
+
+  .dh-controls {
+    padding: 8px 10px;
+    gap: 6px;
+  }
+
+  .dh-btn {
+    padding: 6px 10px;
+    font-size: 11px;
+  }
+
+  .dh-btn-label {
+    display: none; /* icon-only on very small screens */
+  }
+
+  /* Show labels again when there is enough width */
+  @media (min-width: 400px) {
+    .dh-btn-label {
+      display: inline;
+    }
+  }
+
+  .dh-subtitle {
+    max-height: 60px;
+  }
+
+  .dh-subtitle-text {
+    font-size: 12px;
+    -webkit-line-clamp: 2;
+  }
+}
+
+/* Voice selector dropdown */
+.dh-voice-select {
+  height: 36px;
+  padding: 0 8px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  outline: none;
+}
+.dh-voice-select:focus {
+  border-color: var(--accent);
+}
+
+/* Thinking indicator badge */
+.dh-thinking-badge {
+  position: absolute;
+  top: 40px;
+  right: 12px;
+  padding: 4px 10px;
+  border-radius: 12px;
+  background: rgba(255, 165, 0, 0.85);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  z-index: 10;
+  animation: thinking-pulse 1.5s ease-in-out infinite;
+}
+@keyframes thinking-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}

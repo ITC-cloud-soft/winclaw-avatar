@@ -1,0 +1,96 @@
+{
+  "app": {
+    "title": "WinClaw Trợ lý AI",
+    "online": "Trực tuyến",
+    "offline": "Ngoại tuyến",
+    "connecting": "Đang kết nối..."
+  },
+  "topbar": {
+    "settings": "Cài đặt",
+    "theme": "Giao diện",
+    "language": "Ngôn ngữ"
+  },
+  "dh": {
+    "clickToStart": "Nhấn để bắt đầu trò chuyện",
+    "startSession": "Bắt đầu",
+    "endSession": "Kết thúc",
+    "microphone": "Micrô",
+    "camera": "Camera",
+    "micOn": "Micrô đang bật",
+    "micOff": "Micrô đang tắt",
+    "camOn": "Camera đang bật",
+    "camOff": "Camera đang tắt",
+    "subtitle": "Phụ đề",
+    "connecting": "Đang kết nối với nhân vật số...",
+    "connected": "Nhân vật số đã kết nối",
+    "disconnected": "Nhân vật số đã ngắt kết nối",
+    "error": "Lỗi kết nối, vui lòng thử lại",
+    "fullscreen": "Toàn màn hình",
+    "exitFullscreen": "Thoát toàn màn hình",
+    "aiSpeaking": "AI đang nói...",
+    "listening": "Đang lắng nghe...",
+    "processing": "Đang xử lý...",
+    "statusConnecting": "Đang kết nối...",
+    "statusConnected": "Đang phát",
+    "statusError": "Lỗi",
+    "statusDisconnected": "Ngoại tuyến",
+    "avatarAlt": "Ảnh đại diện nhân vật số",
+    "videoLabel": "Video nhân vật số",
+    "cameraPreviewLabel": "Xem trước camera",
+    "controlsLabel": "Điều khiển nhân vật số",
+    "panelLabel": "Nhân vật số",
+    "collapseSubtitle": "Thu gọn phụ đề",
+    "expandSubtitle": "Mở rộng phụ đề"
+  },
+  "chat": {
+    "title": "Lịch sử trò chuyện",
+    "inputPlaceholder": "Nhập tin nhắn...",
+    "send": "Gửi",
+    "clear": "Xóa",
+    "fullscreen": "Toàn màn hình",
+    "exitFullscreen": "Thoát toàn màn hình",
+    "voiceMessage": "Tin nhắn thoại",
+    "textMessage": "Tin nhắn văn bản",
+    "taskRunning": "Đang thực hiện tác vụ...",
+    "taskSuccess": "Tác vụ hoàn thành",
+    "taskFailed": "Tác vụ thất bại",
+    "attachImage": "Đính kèm hình ảnh",
+    "copyMessage": "Sao chép",
+    "panelLabel": "Chat"
+  },
+  "settings": {
+    "title": "Cài đặt",
+    "general": "Chung",
+    "language": "Ngôn ngữ",
+    "theme": "Giao diện",
+    "themeDark": "Tối",
+    "themeLight": "Sáng",
+    "themeAuto": "Theo hệ thống",
+    "qwen": "Mô hình giọng nói",
+    "qwenVoice": "Giọng đọc",
+    "bytedance": "Nhân vật số",
+    "bytedanceRole": "Vai diễn",
+    "identity": "Danh tính",
+    "memory": "Bộ nhớ",
+    "advanced": "Nâng cao",
+    "save": "Lưu",
+    "cancel": "Hủy",
+    "saved": "Đã lưu"
+  },
+  "nav": {
+    "settings": "Cài đặt",
+    "theme": "Chuyển giao diện"
+  },
+  "layout": {
+    "dhFullscreen": "Nhân vật số toàn màn hình",
+    "chatFullscreen": "Chat toàn màn hình",
+    "exitFullscreen": "Thoát toàn màn hình"
+  },
+  "status": {
+    "connected": "Đã kết nối",
+    "disconnected": "Chưa kết nối",
+    "dhOnline": "Nhân vật số: Trực tuyến",
+    "dhOffline": "Nhân vật số: Ngoại tuyến",
+    "model": "Mô hình"
+  }
+}

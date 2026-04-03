@@ -2,6 +2,7 @@ import type { IconName } from "./icons.js";
 
 export const TAB_GROUPS = [
   { label: "Chat", tabs: ["chat"] },
+  { label: "Digital Human", tabs: ["digital-human"] },
   {
     label: "Control",
     tabs: ["overview", "channels", "instances", "sessions", "usage", "cron"],
@@ -21,6 +22,7 @@ export type Tab =
   | "skills"
   | "nodes"
   | "chat"
+  | "digital-human"
   | "personal"
   | "config"
   | "debug"
@@ -37,6 +39,7 @@ const TAB_PATHS: Record<Tab, string> = {
   skills: "/skills",
   nodes: "/nodes",
   chat: "/chat",
+  "digital-human": "/digital-human",
   personal: "/personal",
   config: "/config",
   debug: "/debug",
@@ -154,6 +157,8 @@ export function iconForTab(tab: Tab): IconName {
       return "bug";
     case "logs":
       return "scrollText";
+    case "digital-human":
+      return "monitor";
     default:
       return "folder";
   }
@@ -189,6 +194,8 @@ export function titleForTab(tab: Tab) {
       return "Debug";
     case "logs":
       return "Logs";
+    case "digital-human":
+      return "Digital Human";
     default:
       return "Control";
   }
@@ -358,6 +365,8 @@ export function subtitleForTab(tab: Tab) {
       return "Gateway snapshots, events, and manual RPC calls.";
     case "logs":
       return "Live tail of the gateway file logs.";
+    case "digital-human":
+      return "Real-time voice conversation with your digital human avatar.";
     default:
       return "";
   }

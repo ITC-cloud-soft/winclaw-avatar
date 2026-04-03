@@ -1,0 +1,185 @@
+{
+  "id": "digital-human",
+  "name": "Digital Human",
+  "description": "ByteDance digital human avatar with Qwen realtime voice",
+  "version": "1.0.0",
+  "uiHints": {
+    "qwen.apiKey": {
+      "label": "DashScope API Key",
+      "sensitive": true,
+      "help": "Qwen3-omni DashScope API key. Use ${DASHSCOPE_API_KEY} to reference an environment variable."
+    },
+    "qwen.model": {
+      "label": "Qwen Model"
+    },
+    "qwen.voice": {
+      "label": "Voice"
+    },
+    "qwen.voiceModel": {
+      "label": "Voice Transcription Model",
+      "advanced": true
+    },
+    "qwen.serverVad": {
+      "label": "Server-side VAD",
+      "advanced": true
+    },
+    "bytedance.appId": {
+      "label": "Virtual Human App ID",
+      "sensitive": true
+    },
+    "bytedance.token": {
+      "label": "Virtual Human Auth Token",
+      "sensitive": true
+    },
+    "bytedance.role": {
+      "label": "Avatar Role ID"
+    },
+    "bytedance.rtcAppId": {
+      "label": "ByteRTC App ID",
+      "sensitive": true
+    },
+    "bytedance.rtcAppKey": {
+      "label": "ByteRTC App Key",
+      "sensitive": true
+    },
+    "bytedance.rtcRoomId": {
+      "label": "RTC Room ID",
+      "advanced": true
+    },
+    "bytedance.rtcPushUid": {
+      "label": "RTC Publisher UID",
+      "advanced": true
+    },
+    "bytedance.rtcViewerUid": {
+      "label": "RTC Viewer UID",
+      "advanced": true
+    },
+    "identity.voiceInstructions": {
+      "label": "Extra Voice Instructions",
+      "help": "Additional instructions appended after SOUL.md for the voice scene.",
+      "advanced": true
+    },
+    "identity.maxInstructionsChars": {
+      "label": "Max Instructions Length (chars)",
+      "advanced": true
+    },
+    "identity.hotReload": {
+      "label": "Hot Reload Identity",
+      "help": "Automatically reload SOUL.md / IDENTITY.md changes without restarting.",
+      "advanced": true
+    },
+    "memory.recordConversation": {
+      "label": "Record Conversations to Memory"
+    },
+    "memory.flushDebounceMs": {
+      "label": "Memory Flush Debounce (ms)",
+      "advanced": true
+    },
+    "memory.preloadDays": {
+      "label": "Memory Preload Days"
+    },
+    "memory.recallTrigger": {
+      "label": "Memory Recall Trigger"
+    },
+    "memory.recallTopK": {
+      "label": "Memory Recall Top-K Results",
+      "advanced": true
+    },
+    "taskBridge.model": {
+      "label": "Task Bridge Model",
+      "help": "Model used for task execution. Leave empty to use the default agent model."
+    },
+    "taskBridge.maxWaitSeconds": {
+      "label": "Task Max Wait (sec)",
+      "advanced": true
+    },
+    "taskBridge.summaryMaxTokens": {
+      "label": "Task Summary Max Tokens",
+      "advanced": true
+    },
+    "session.timeoutMinutes": {
+      "label": "Session Timeout (min)"
+    },
+    "session.maxConcurrent": {
+      "label": "Max Concurrent Sessions",
+      "advanced": true
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "qwen": {
+        "type": "object",
+        "description": "Qwen3-omni realtime voice model configuration",
+        "additionalProperties": false,
+        "properties": {
+          "apiKey":     { "type": "string", "description": "DashScope API Key (use ${DASHSCOPE_API_KEY})" },
+          "model":      { "type": "string", "default": "qwen3-omni-flash-realtime" },
+          "voice":      { "type": "string", "default": "Cherry", "enum": ["Cherry", "Serena", "Ethan", "Chelsie"] },
+          "voiceModel": { "type": "string", "default": "gummy-realtime-v1" },
+          "serverVad":  { "type": "boolean", "default": true }
+        },
+        "required": ["apiKey"]
+      },
+      "bytedance": {
+        "type": "object",
+        "description": "ByteDance virtual human API configuration",
+        "additionalProperties": false,
+        "properties": {
+          "appId":        { "type": "string", "description": "Virtual Human AppID" },
+          "token":        { "type": "string", "description": "Virtual Human Auth Token" },
+          "role":         { "type": "string", "default": "250623-zhibo-linyunzhi", "description": "Avatar role ID" },
+          "rtcAppId":     { "type": "string", "description": "ByteRTC App ID" },
+          "rtcAppKey":    { "type": "string", "description": "ByteRTC App Key" },
+          "rtcRoomId":    { "type": "string", "default": "winclaw_dh_room" },
+          "rtcPushUid":   { "type": "string", "default": "winclaw_dh_publisher" },
+          "rtcViewerUid": { "type": "string", "default": "winclaw_dh_viewer" }
+        },
+        "required": ["appId", "token", "rtcAppId", "rtcAppKey"]
+      },
+      "identity": {
+        "type": "object",
+        "description": "Identity loading settings (SOUL.md / IDENTITY.md)",
+        "additionalProperties": false,
+        "properties": {
+          "voiceInstructions":    { "type": "string", "default": "", "description": "Extra voice-scene instructions appended after SOUL.md" },
+          "maxInstructionsChars": { "type": "integer", "default": 4000, "minimum": 500, "maximum": 10000 },
+          "hotReload":            { "type": "boolean", "default": true }
+        }
+      },
+      "memory": {
+        "type": "object",
+        "description": "Memory integration settings (memory-core)",
+        "additionalProperties": false,
+        "properties": {
+          "recordConversation": { "type": "boolean", "default": true },
+          "flushDebounceMs":    { "type": "integer", "default": 3000, "minimum": 500 },
+          "preloadDays":        { "type": "integer", "default": 2, "minimum": 0, "maximum": 7 },
+          "recallTrigger":      { "type": "string", "default": "qwen_recall", "enum": ["qwen_recall", "keyword", "both"] },
+          "recallTopK":         { "type": "integer", "default": 5, "minimum": 1, "maximum": 20 }
+        }
+      },
+      "taskBridge": {
+        "type": "object",
+        "description": "WinClaw Agent task execution settings",
+        "additionalProperties": false,
+        "properties": {
+          "model":            { "type": "string", "default": "", "description": "Task model (empty = use default agent model)" },
+          "maxWaitSeconds":   { "type": "integer", "default": 60, "minimum": 10, "maximum": 300 },
+          "summaryMaxTokens": { "type": "integer", "default": 200, "minimum": 50 }
+        }
+      },
+      "session": {
+        "type": "object",
+        "description": "Session lifecycle settings",
+        "additionalProperties": false,
+        "properties": {
+          "timeoutMinutes": { "type": "integer", "default": 30, "minimum": 5 },
+          "maxConcurrent":  { "type": "integer", "default": 1, "minimum": 1, "maximum": 5 }
+        }
+      }
+    },
+    "required": ["qwen", "bytedance"]
+  }
+}

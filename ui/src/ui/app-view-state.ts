@@ -303,6 +303,24 @@ export type AppViewState = {
   handleCloseExecLog: () => void;
   handleClearExecLog: () => void;
   handleToggleExecLogAutoScroll: () => void;
+  // ── Digital Human split-screen state (optional — activated on first DH tab visit) ──
+  /** Current DH split-screen layout mode. Defaults to "split". */
+  dhLayoutMode?: "split" | "dh-fullscreen" | "chat-fullscreen";
+  /** Whether the microphone is active in the DH session. */
+  dhMicEnabled?: boolean;
+  /** Whether the camera PiP is active in the DH session. */
+  dhCameraEnabled?: boolean;
+  /** Whether the subtitle bar is shown in the DH panel. */
+  dhSubtitleVisible?: boolean;
+  /** DH session connection status. */
+  dhConnectionStatus?: "disconnected" | "connecting" | "connected" | "error";
+  /** Current subtitle / AI speech text shown in the DH panel. */
+  dhCurrentSubtitle?: string;
+  /** Error message shown when dhConnectionStatus === "error". */
+  dhErrorMessage?: string | null;
+  /** Active DHSessionController instance (present while a session is live). */
+  dhController?: import('./dh-session-controller.ts').DHSessionController;
+
   // Command palette & session tabs
   commandPaletteOpen: boolean;
   openTabs: Tab[];

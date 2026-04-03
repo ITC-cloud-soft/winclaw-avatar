@@ -1,0 +1,96 @@
+{
+  "app": {
+    "title": "WinClaw AI Assistant",
+    "online": "Online",
+    "offline": "Offline",
+    "connecting": "Connecting..."
+  },
+  "topbar": {
+    "settings": "Settings",
+    "theme": "Theme",
+    "language": "Language"
+  },
+  "dh": {
+    "clickToStart": "Click to start conversation",
+    "startSession": "Start",
+    "endSession": "End",
+    "microphone": "Microphone",
+    "camera": "Camera",
+    "micOn": "Microphone On",
+    "micOff": "Microphone Off",
+    "camOn": "Camera On",
+    "camOff": "Camera Off",
+    "subtitle": "Subtitles",
+    "connecting": "Connecting to digital human...",
+    "connected": "Digital human connected",
+    "disconnected": "Digital human disconnected",
+    "error": "Connection error — please retry",
+    "fullscreen": "Full Screen",
+    "exitFullscreen": "Exit Full Screen",
+    "aiSpeaking": "AI is speaking...",
+    "listening": "Listening...",
+    "processing": "Processing...",
+    "statusConnecting": "Connecting...",
+    "statusConnected": "Live",
+    "statusError": "Error",
+    "statusDisconnected": "Offline",
+    "avatarAlt": "Digital human avatar",
+    "videoLabel": "Digital human video stream",
+    "cameraPreviewLabel": "Camera preview",
+    "controlsLabel": "Digital human controls",
+    "panelLabel": "Digital Human",
+    "collapseSubtitle": "Collapse subtitles",
+    "expandSubtitle": "Expand subtitles"
+  },
+  "chat": {
+    "title": "Conversation",
+    "inputPlaceholder": "Type a message...",
+    "send": "Send",
+    "clear": "Clear",
+    "fullscreen": "Full Screen",
+    "exitFullscreen": "Exit Full Screen",
+    "voiceMessage": "Voice",
+    "textMessage": "Text",
+    "taskRunning": "Running task...",
+    "taskSuccess": "Task completed",
+    "taskFailed": "Task failed",
+    "attachImage": "Attach image",
+    "copyMessage": "Copy",
+    "panelLabel": "Chat"
+  },
+  "settings": {
+    "title": "Settings",
+    "general": "General",
+    "language": "Language",
+    "theme": "Appearance",
+    "themeDark": "Dark",
+    "themeLight": "Light",
+    "themeAuto": "System",
+    "qwen": "Voice Model",
+    "qwenVoice": "Voice",
+    "bytedance": "Digital Human",
+    "bytedanceRole": "Role",
+    "identity": "Identity",
+    "memory": "Memory",
+    "advanced": "Advanced",
+    "save": "Save",
+    "cancel": "Cancel",
+    "saved": "Saved"
+  },
+  "nav": {
+    "settings": "Settings",
+    "theme": "Toggle theme"
+  },
+  "layout": {
+    "dhFullscreen": "Digital human full screen",
+    "chatFullscreen": "Chat full screen",
+    "exitFullscreen": "Exit full screen"
+  },
+  "status": {
+    "connected": "Connected",
+    "disconnected": "Disconnected",
+    "dhOnline": "DH: Online",
+    "dhOffline": "DH: Offline",
+    "model": "Model"
+  }
+}

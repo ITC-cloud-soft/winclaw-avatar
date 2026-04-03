@@ -1,0 +1,96 @@
+{
+  "app": {
+    "title": "WinClaw ИИ-ассистент",
+    "online": "В сети",
+    "offline": "Не в сети",
+    "connecting": "Подключение..."
+  },
+  "topbar": {
+    "settings": "Настройки",
+    "theme": "Тема",
+    "language": "Язык"
+  },
+  "dh": {
+    "clickToStart": "Нажмите, чтобы начать разговор",
+    "startSession": "Начать",
+    "endSession": "Завершить",
+    "microphone": "Микрофон",
+    "camera": "Камера",
+    "micOn": "Микрофон включён",
+    "micOff": "Микрофон выключен",
+    "camOn": "Камера включена",
+    "camOff": "Камера выключена",
+    "subtitle": "Субтитры",
+    "connecting": "Подключение к цифровому человеку...",
+    "connected": "Цифровой человек подключён",
+    "disconnected": "Цифровой человек отключён",
+    "error": "Ошибка соединения, попробуйте ещё раз",
+    "fullscreen": "Полный экран",
+    "exitFullscreen": "Выйти из полного экрана",
+    "aiSpeaking": "ИИ говорит...",
+    "listening": "Слушаю...",
+    "processing": "Обработка...",
+    "statusConnecting": "Подключение...",
+    "statusConnected": "В эфире",
+    "statusError": "Ошибка",
+    "statusDisconnected": "Не в сети",
+    "avatarAlt": "Аватар цифрового человека",
+    "videoLabel": "Видеопоток цифрового человека",
+    "cameraPreviewLabel": "Предпросмотр камеры",
+    "controlsLabel": "Управление цифровым человеком",
+    "panelLabel": "Цифровой человек",
+    "collapseSubtitle": "Свернуть субтитры",
+    "expandSubtitle": "Развернуть субтитры"
+  },
+  "chat": {
+    "title": "Диалог",
+    "inputPlaceholder": "Введите сообщение...",
+    "send": "Отправить",
+    "clear": "Очистить",
+    "fullscreen": "Полный экран",
+    "exitFullscreen": "Выйти из полного экрана",
+    "voiceMessage": "Голосовое сообщение",
+    "textMessage": "Текстовое сообщение",
+    "taskRunning": "Задача выполняется...",
+    "taskSuccess": "Задача выполнена",
+    "taskFailed": "Задача не выполнена",
+    "attachImage": "Прикрепить изображение",
+    "copyMessage": "Копировать",
+    "panelLabel": "Чат"
+  },
+  "settings": {
+    "title": "Настройки",
+    "general": "Основные",
+    "language": "Язык",
+    "theme": "Оформление",
+    "themeDark": "Тёмная",
+    "themeLight": "Светлая",
+    "themeAuto": "Как в системе",
+    "qwen": "Голосовая модель",
+    "qwenVoice": "Голос",
+    "bytedance": "Цифровой человек",
+    "bytedanceRole": "Роль",
+    "identity": "Личность",
+    "memory": "Память",
+    "advanced": "Дополнительно",
+    "save": "Сохранить",
+    "cancel": "Отмена",
+    "saved": "Сохранено"
+  },
+  "nav": {
+    "settings": "Настройки",
+    "theme": "Сменить тему"
+  },
+  "layout": {
+    "dhFullscreen": "Цифровой человек на весь экран",
+    "chatFullscreen": "Чат на весь экран",
+    "exitFullscreen": "Выйти из полного экрана"
+  },
+  "status": {
+    "connected": "Подключено",
+    "disconnected": "Не подключено",
+    "dhOnline": "ЦЧ: в сети",
+    "dhOffline": "ЦЧ: не в сети",
+    "model": "Модель"
+  }
+}

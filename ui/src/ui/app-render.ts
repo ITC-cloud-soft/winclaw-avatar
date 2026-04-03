@@ -54,6 +54,7 @@ import {
   updateSkillEnabled,
 } from "./controllers/skills.ts";
 import { loadUsage, loadSessionTimeSeries, loadSessionLogs } from "./controllers/usage.ts";
+import { DHSessionController } from "./dh-session-controller.ts";
 import { icons } from "./icons.ts";
 import { COMMANDS, normalizeBasePath, subtitleForTab, titleForTab } from "./navigation.ts";
 import { generateUUID } from "./uuid.ts";
@@ -79,6 +80,9 @@ import { renderLogs } from "./views/logs.ts";
 import { renderNodes } from "./views/nodes.ts";
 import { renderOverview } from "./views/overview.ts";
 import { renderPersonalInfo } from "./views/personal-info.ts";
+import { renderMainLayout } from "./views/main-layout.ts";
+import type { MainLayoutState, LayoutMode } from "./views/main-layout.ts";
+import { renderLanguageSelector } from "./components/language-selector.ts";
 import { loadPersonalInfo, savePersonalInfo, updatePersonalInfoField } from "./controllers/personal-info.ts";
 import { renderSessions } from "./views/sessions.ts";
 import { renderSkills } from "./views/skills.ts";
@@ -138,6 +142,266 @@ function resolveAssistantAvatarUrl(state: AppViewState): string | undefined {
   return identity?.avatarUrl;
 }
 
+/**
+ * Construct the MainLayoutState from AppViewState for the digital-human tab.
+ * The DH panel is in a "disconnected" stub state until real WS integration.
+ */
+function buildMainLayoutState(
+  state: AppViewState,
+  onNewSession: () => void,
+): MainLayoutState {
+  const assistantAvatarUrl = resolveAssistantAvatarUrl(state);
+  const chatAvatarUrl = state.chatAvatarUrl ?? assistantAvatarUrl ?? null;
+  const chatDisabledReason = state.connected ? null : "Disconnected from gateway.";
+  const showThinking = state.onboarding ? false : state.settings.chatShowThinking;
+
+  return {
+    layoutMode: (state.dhLayoutMode ?? "split") as LayoutMode,
+    orientation: window.innerWidth >= 768 ? "landscape" : "portrait",
+    assistantName: state.assistantName ?? "WinClaw",
+    dhOnline: state.dhConnectionStatus === "connected",
+    basePath: state.basePath ?? "",
+    onSetLayoutMode: (mode) => {
+      state.dhLayoutMode = mode;
+    },
+    onOpenSettings: () => state.openTabFromPalette("config"),
+    onToggleTheme: () => {
+      const next = state.themeResolved === "dark" ? "light" : "dark";
+      state.setTheme(next as import("./theme.ts").ThemeMode);
+    },
+    dhPanel: {
+      isConnected: state.dhConnectionStatus === "connected",
+      connectionStatus: state.dhConnectionStatus ?? "disconnected",
+      errorMessage: state.dhErrorMessage ?? null,
+      micEnabled: state.dhMicEnabled ?? false,
+      cameraEnabled: state.dhCameraEnabled ?? false,
+      subtitleVisible: state.dhSubtitleVisible ?? true,
+      isThinking: state.dhIsThinking ?? false,
+      currentSubtitle: state.dhCurrentSubtitle ?? "",
+      onStart: () => {
+        // Prevent double-start while connecting.
+        if (state.dhConnectionStatus === "connecting" || state.dhConnectionStatus === "connected") {
+          return;
+        }
+
+        state.dhConnectionStatus = "connecting";
+        state.dhErrorMessage = null;
+
+        // Discover the DH WebSocket port from the health endpoint, then
+        // create a DHSessionController and start the session.
+        const token = state.settings?.token ?? "";
+        fetch("/api/dh/health", {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        })
+          .then(async (res) => {
+            if (!res.ok) {
+              throw new Error(`DH health check failed: ${res.status} ${res.statusText}`);
+            }
+            const data = (await res.json()) as { wsPort?: number };
+            const wsPort = data.wsPort;
+            if (!wsPort) {
+              throw new Error("DH health response missing wsPort");
+            }
+
+            const controller = new DHSessionController({
+              onConnectionStatusChange: (status) => {
+                state.dhConnectionStatus = status;
+                if (status === "disconnected") {
+                  state.dhCurrentSubtitle = "";
+                  // Do NOT clear controller here — stop() during start() triggers this
+                }
+              },
+              onSubtitleUpdate: (text, isDelta) => {
+                if (isDelta) {
+                  state.dhCurrentSubtitle = (state.dhCurrentSubtitle ?? "") + text;
+                } else {
+                  state.dhCurrentSubtitle = text;
+                }
+              },
+              onErrorMessage: (message) => {
+                state.dhErrorMessage = message;
+              },
+              onUserTranscript: (_transcript) => {
+                // User transcript available for future use (e.g. chat log).
+              },
+              onThinkingChange: (thinking) => {
+                state.dhIsThinking = thinking;
+              },
+            });
+
+            state.dhController = controller;
+            (window as unknown as Record<string, unknown>).__dhController = controller;
+            console.log('[DH] Controller stored on window, starting session...');
+            await controller.start(wsPort, token);
+            console.log('[DH] Session started, recorder:', !!controller.recorder);
+
+            // Re-attach camera preview if it was open before session start
+            const win = window as unknown as Record<string, unknown>;
+            const camStream = win.__dhCameraStream as MediaStream | null;
+            if (camStream && camStream.active && state.dhCameraEnabled) {
+              setTimeout(() => {
+                const el = document.getElementById('camera-preview') as HTMLVideoElement | null;
+                if (el && !el.srcObject) el.srcObject = camStream;
+              }, 200);
+            }
+          })
+          .catch((err: unknown) => {
+            console.error("[DH] Session start failed:", err);
+            state.dhConnectionStatus = "error";
+            state.dhErrorMessage =
+              err instanceof Error ? err.message : "Failed to start DH session";
+            state.dhController = undefined;
+            (window as unknown as Record<string, unknown>).__dhController = null;
+          });
+      },
+      onStop: () => {
+        const controller = state.dhController;
+        state.dhCurrentSubtitle = "";
+        if (controller) {
+          void controller.stop();
+        } else {
+          state.dhConnectionStatus = "disconnected";
+        }
+      },
+      onToggleMic: () => {
+        const next = !(state.dhMicEnabled ?? false);
+        state.dhMicEnabled = next;
+        // Mute/unmute by toggling enabled on ALL active audio input tracks
+        try {
+          const win = window as unknown as Record<string, unknown>;
+          const ctrl = win.__dhController as Record<string, unknown> | null;
+          // Access recorder through any property name (survives minification)
+          if (ctrl) {
+            for (const val of Object.values(ctrl)) {
+              if (val && typeof val === 'object' && 'setMuted' in (val as Record<string, unknown>)) {
+                (val as { setMuted: (m: boolean) => void }).setMuted(!next);
+                break;
+              }
+            }
+          }
+        } catch (e) {
+          console.error('[Mic] Toggle error:', e);
+        }
+      },
+      onToggleCamera: () => {
+        // Fully independent camera management — no controller dependency
+        const win = window as unknown as Record<string, unknown>;
+        const currentStream = win.__dhCameraStream as MediaStream | null;
+        if (currentStream && currentStream.active) {
+          // Camera is on → turn off
+          currentStream.getTracks().forEach(t => t.stop());
+          win.__dhCameraStream = null;
+          const el = document.getElementById('camera-preview') as HTMLVideoElement | null;
+          if (el) el.srcObject = null;
+          state.dhCameraEnabled = false;
+        } else {
+          // Camera is off → turn on
+          state.dhCameraEnabled = true;
+          navigator.mediaDevices.getUserMedia({
+            video: { width: { ideal: 320 }, height: { ideal: 240 }, facingMode: 'user' },
+            audio: false,
+          }).then(async (stream) => {
+            win.__dhCameraStream = stream;
+            for (let i = 0; i < 30; i++) {
+              const el = document.getElementById('camera-preview') as HTMLVideoElement | null;
+              if (el) { el.srcObject = stream; return; }
+              await new Promise(r => setTimeout(r, 50));
+            }
+          }).catch((err) => {
+            console.error('[Camera] Access denied:', err);
+            state.dhCameraEnabled = false;
+          });
+        }
+      },
+      onToggleSubtitle: () => {
+        state.dhSubtitleVisible = !(state.dhSubtitleVisible ?? true);
+      },
+      onVideoDoubleClick: () => {
+        state.dhLayoutMode = state.dhLayoutMode === "dh-fullscreen" ? "split" : "dh-fullscreen";
+      },
+      selectedVoice: (state as unknown as Record<string, string>).dhSelectedVoice ?? "longxiaochun",
+      onVoiceChange: (voiceId: string) => {
+        (state as unknown as Record<string, string>).dhSelectedVoice = voiceId;
+        // Store on window so backend can read it
+        (window as unknown as Record<string, unknown>).__dhSelectedVoice = voiceId;
+      },
+    },
+    chatPanel: {
+      sessionKey: state.sessionKey,
+      onSessionKeyChange: (next) => {
+        state.sessionKey = next;
+        state.chatMessage = "";
+        state.chatAttachments = [];
+        state.chatStream = null;
+        state.chatStreamStartedAt = null;
+        state.chatRunId = null;
+        state.chatQueue = [];
+        state.resetToolStream();
+        state.resetChatScroll();
+        state.applySettings({
+          ...state.settings,
+          sessionKey: next,
+          lastActiveSessionKey: next,
+        });
+        void state.loadAssistantIdentity();
+        void loadChatHistory(state);
+        void refreshChatAvatar(state);
+      },
+      thinkingLevel: state.chatThinkingLevel,
+      showThinking,
+      loading: state.chatLoading,
+      sending: state.chatSending,
+      canAbort: Boolean(state.chatRunId),
+      compactionStatus: state.compactionStatus,
+      assistantAvatarUrl: chatAvatarUrl,
+      messages: state.chatMessages,
+      toolMessages: state.chatToolMessages,
+      stream: state.chatStream,
+      streamStartedAt: state.chatStreamStartedAt,
+      draft: state.chatMessage,
+      queue: state.chatQueue,
+      connected: state.connected,
+      canSend: state.connected,
+      disabledReason: chatDisabledReason,
+      error: state.lastError,
+      sessions: state.sessionsResult,
+      focusMode: false,
+      sidebarOpen: state.sidebarOpen,
+      sidebarContent: state.sidebarContent,
+      sidebarError: state.sidebarError,
+      sidebarMode: state.sidebarMode,
+      splitRatio: state.splitRatio,
+      execLogEntries: state.execLogEntries,
+      execLogActive: state.execLogActive,
+      execLogAutoScroll: state.execLogAutoScroll,
+      assistantName: state.assistantName,
+      assistantAvatar: state.assistantAvatar,
+      attachments: state.chatAttachments,
+      onAttachmentsChange: (next) => (state.chatAttachments = next),
+      showNewMessages: state.chatNewMessagesBelow && !state.chatManualRefreshInFlight,
+      onScrollToBottom: () => state.scrollToBottom(),
+      onRefresh: () => {
+        state.resetToolStream();
+        return Promise.all([loadChatHistory(state), refreshChatAvatar(state)]);
+      },
+      onToggleFocusMode: () => {},
+      onChatScroll: (event) => state.handleChatScroll(event),
+      onDraftChange: (next) => (state.chatMessage = next),
+      onSend: () => state.handleSendChat(),
+      onAbort: () => void state.handleAbortChat(),
+      onQueueRemove: (id) => state.removeQueuedMessage(id),
+      onNewSession,
+      onOpenSidebar: (content) => state.handleOpenSidebar(content),
+      onCloseSidebar: () => state.handleCloseSidebar(),
+      onSplitRatioChange: (ratio) => state.handleSplitRatioChange(ratio),
+      onOpenExecLog: () => state.handleOpenExecLog(),
+      onCloseExecLog: () => state.handleCloseExecLog(),
+      onClearExecLog: () => state.handleClearExecLog(),
+      onToggleExecLogAutoScroll: () => state.handleToggleExecLogAutoScroll(),
+    },
+  };
+}
+
 function resolveChatSessionTitle(state: AppViewState): string | undefined {
   const sessions = state.sessionsResult?.sessions;
   if (!sessions) {
@@ -153,6 +417,7 @@ export function renderApp(state: AppViewState) {
   const cronNext = state.cronStatus?.nextWakeAtMs ?? null;
   const chatDisabledReason = state.connected ? null : "Disconnected from gateway.";
   const isChat = state.tab === "chat";
+  const isDH = state.tab === "digital-human";
   const chatFocus = isChat && (state.settings.chatFocusMode || state.onboarding);
   const showThinking = state.onboarding ? false : state.settings.chatShowThinking;
   const assistantAvatarUrl = resolveAssistantAvatarUrl(state);
@@ -167,7 +432,7 @@ export function renderApp(state: AppViewState) {
     null;
 
   return html`
-    <div class="shell ${isChat ? "shell--chat" : ""} ${state.onboarding ? "shell--onboarding" : ""}">
+    <div class="shell ${isChat ? "shell--chat" : ""} ${isDH ? "shell--dh" : ""} ${state.onboarding ? "shell--onboarding" : ""}">
       <header class="topbar">
         <div class="topbar-left">
           <div class="brand">
@@ -182,6 +447,7 @@ export function renderApp(state: AppViewState) {
           <span>${state.connected ? "Connected" : "Disconnected"}</span>
         </div>
         <div class="topbar-right">
+          ${renderLanguageSelector({ className: "topbar-lang" })}
           <button class="topbar-cmd-btn" @click=${() => state.toggleCommandPalette()} title="Command Palette (Ctrl+K)">
             Ctrl+K
           </button>
@@ -1056,6 +1322,12 @@ export function renderApp(state: AppViewState) {
                   return saveExecApprovals(state, target);
                 },
               })
+            : nothing
+        }
+
+        ${
+          isDH
+            ? renderMainLayout(buildMainLayoutState(state, () => void createNewChatSession(state)))
             : nothing
         }
 

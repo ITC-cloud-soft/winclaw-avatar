@@ -1,0 +1,96 @@
+{
+  "app": {
+    "title": "WinClaw Asistente IA",
+    "online": "En línea",
+    "offline": "Sin conexión",
+    "connecting": "Conectando..."
+  },
+  "topbar": {
+    "settings": "Ajustes",
+    "theme": "Tema",
+    "language": "Idioma"
+  },
+  "dh": {
+    "clickToStart": "Haz clic para iniciar la conversación",
+    "startSession": "Iniciar",
+    "endSession": "Finalizar",
+    "microphone": "Micrófono",
+    "camera": "Cámara",
+    "micOn": "Micrófono activado",
+    "micOff": "Micrófono desactivado",
+    "camOn": "Cámara activada",
+    "camOff": "Cámara desactivada",
+    "subtitle": "Subtítulos",
+    "connecting": "Conectando con el humano digital...",
+    "connected": "Humano digital conectado",
+    "disconnected": "Humano digital desconectado",
+    "error": "Error de conexión, inténtalo de nuevo",
+    "fullscreen": "Pantalla completa",
+    "exitFullscreen": "Salir de pantalla completa",
+    "aiSpeaking": "La IA está hablando...",
+    "listening": "Escuchando...",
+    "processing": "Procesando...",
+    "statusConnecting": "Conectando...",
+    "statusConnected": "En vivo",
+    "statusError": "Error",
+    "statusDisconnected": "Sin conexión",
+    "avatarAlt": "Avatar del humano digital",
+    "videoLabel": "Vídeo del humano digital",
+    "cameraPreviewLabel": "Vista previa de cámara",
+    "controlsLabel": "Controles del humano digital",
+    "panelLabel": "Humano digital",
+    "collapseSubtitle": "Contraer subtítulos",
+    "expandSubtitle": "Expandir subtítulos"
+  },
+  "chat": {
+    "title": "Conversación",
+    "inputPlaceholder": "Escribe un mensaje...",
+    "send": "Enviar",
+    "clear": "Limpiar",
+    "fullscreen": "Pantalla completa",
+    "exitFullscreen": "Salir de pantalla completa",
+    "voiceMessage": "Mensaje de voz",
+    "textMessage": "Mensaje de texto",
+    "taskRunning": "Tarea en curso...",
+    "taskSuccess": "Tarea completada",
+    "taskFailed": "Tarea fallida",
+    "attachImage": "Adjuntar imagen",
+    "copyMessage": "Copiar",
+    "panelLabel": "Chat"
+  },
+  "settings": {
+    "title": "Ajustes",
+    "general": "General",
+    "language": "Idioma",
+    "theme": "Apariencia",
+    "themeDark": "Oscuro",
+    "themeLight": "Claro",
+    "themeAuto": "Sistema",
+    "qwen": "Modelo de voz",
+    "qwenVoice": "Voz",
+    "bytedance": "Humano digital",
+    "bytedanceRole": "Rol",
+    "identity": "Identidad",
+    "memory": "Memoria",
+    "advanced": "Avanzado",
+    "save": "Guardar",
+    "cancel": "Cancelar",
+    "saved": "Guardado"
+  },
+  "nav": {
+    "settings": "Ajustes",
+    "theme": "Cambiar tema"
+  },
+  "layout": {
+    "dhFullscreen": "Humano digital pantalla completa",
+    "chatFullscreen": "Chat pantalla completa",
+    "exitFullscreen": "Salir de pantalla completa"
+  },
+  "status": {
+    "connected": "Conectado",
+    "disconnected": "Desconectado",
+    "dhOnline": "HD: En línea",
+    "dhOffline": "HD: Sin conexión",
+    "model": "Modelo"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "@winclaw/digital-human",
+  "version": "1.0.0",
+  "description": "WinClaw digital human plugin — ByteDance avatar with Qwen3-omni realtime voice",
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": {
+    "@byteplus/rtc": "^4.66.0",
+    "ws": "^8.19.0",
+    "zod": "^4.3.6"
+  },
+  "winclaw": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  }
+}

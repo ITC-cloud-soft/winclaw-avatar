@@ -1,0 +1,96 @@
+{
+  "app": {
+    "title": "WinClaw AIアシスタント",
+    "online": "オンライン",
+    "offline": "オフライン",
+    "connecting": "接続中..."
+  },
+  "topbar": {
+    "settings": "設定",
+    "theme": "テーマ",
+    "language": "言語"
+  },
+  "dh": {
+    "clickToStart": "クリックして会話を開始",
+    "startSession": "会話を開始",
+    "endSession": "会話を終了",
+    "microphone": "マイク",
+    "camera": "カメラ",
+    "micOn": "マイク ON",
+    "micOff": "マイク OFF",
+    "camOn": "カメラ ON",
+    "camOff": "カメラ OFF",
+    "subtitle": "字幕",
+    "connecting": "デジタルヒューマンに接続中...",
+    "connected": "デジタルヒューマン接続完了",
+    "disconnected": "デジタルヒューマンが切断されました",
+    "error": "接続エラー。もう一度お試しください",
+    "fullscreen": "全画面",
+    "exitFullscreen": "全画面解除",
+    "aiSpeaking": "AI が話しています...",
+    "listening": "聞いています...",
+    "processing": "処理中...",
+    "statusConnecting": "接続中...",
+    "statusConnected": "ライブ中",
+    "statusError": "エラー",
+    "statusDisconnected": "オフライン",
+    "avatarAlt": "デジタルヒューマンのアバター",
+    "videoLabel": "デジタルヒューマン映像",
+    "cameraPreviewLabel": "カメラプレビュー",
+    "controlsLabel": "デジタルヒューマン操作",
+    "panelLabel": "デジタルヒューマン",
+    "collapseSubtitle": "字幕を折りたたむ",
+    "expandSubtitle": "字幕を展開する"
+  },
+  "chat": {
+    "title": "会話履歴",
+    "inputPlaceholder": "メッセージを入力...",
+    "send": "送信",
+    "clear": "クリア",
+    "fullscreen": "全画面",
+    "exitFullscreen": "全画面解除",
+    "voiceMessage": "音声メッセージ",
+    "textMessage": "テキストメッセージ",
+    "taskRunning": "タスク実行中...",
+    "taskSuccess": "タスク完了",
+    "taskFailed": "タスク失敗",
+    "attachImage": "画像を添付",
+    "copyMessage": "コピー",
+    "panelLabel": "チャット"
+  },
+  "settings": {
+    "title": "設定",
+    "general": "一般",
+    "language": "言語",
+    "theme": "外観",
+    "themeDark": "ダーク",
+    "themeLight": "ライト",
+    "themeAuto": "システムに合わせる",
+    "qwen": "音声モデル",
+    "qwenVoice": "ボイス",
+    "bytedance": "デジタルヒューマン",
+    "bytedanceRole": "キャラクター",
+    "identity": "ID 設定",
+    "memory": "メモリ設定",
+    "advanced": "詳細設定",
+    "save": "保存",
+    "cancel": "キャンセル",
+    "saved": "保存しました"
+  },
+  "nav": {
+    "settings": "設定",
+    "theme": "テーマ切り替え"
+  },
+  "layout": {
+    "dhFullscreen": "デジタルヒューマン全画面",
+    "chatFullscreen": "チャット全画面",
+    "exitFullscreen": "全画面を終了"
+  },
+  "status": {
+    "connected": "接続済み",
+    "disconnected": "未接続",
+    "dhOnline": "デジタルヒューマン: オンライン",
+    "dhOffline": "デジタルヒューマン: オフライン",
+    "model": "モデル"
+  }
+}

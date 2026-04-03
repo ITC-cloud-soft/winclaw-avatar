@@ -1,0 +1,376 @@
+/* =============================================================================
+   layout-v3.css
+   Split-screen layout system for the WinClaw v3 Digital Human + Chat UI.
+
+   Topology
+   ────────
+   .shell.shell--v3
+     .topbar.topbar-v3              ← simplified topbar
+     .main-container                ← flex root; orientation class drives direction
+       .panel-dh                    ← Digital Human panel
+       .panel-chat                  ← Text Chat panel
+     (status bar rendered by host)
+
+   Design tokens are imported from base.css.
+   ============================================================================= */
+
+/* =============================================================================
+   Shell v3 — wraps the entire page
+   ============================================================================= */
+
+.shell--v3 {
+  --shell-topbar-height: 52px;
+  --shell-statusbar-height: 32px;
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-rows:
+    var(--shell-topbar-height)
+    1fr
+    var(--shell-statusbar-height);
+  grid-template-areas:
+    "topbar"
+    "main"
+    "statusbar";
+  height: 100vh;
+  overflow: hidden;
+}
+
+@supports (height: 100dvh) {
+  .shell--v3 {
+    height: 100dvh;
+  }
+}
+
+/* =============================================================================
+   Simplified topbar (v3)
+   ============================================================================= */
+
+.topbar-v3 {
+  grid-area: topbar;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 16px;
+  height: var(--shell-topbar-height);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  z-index: 40;
+  /* Subtle blur — matches the sidebar / popover pattern */
+  backdrop-filter: blur(0px); /* host can enable if desired */
+}
+
+/* Left: brand logo + DH identity */
+.topbar-v3__left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+
+/* DH name + online dot */
+.dh-identity {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.dh-identity__name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Right: language selector + icon buttons */
+.topbar-v3__right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* Slot where the language selector component is rendered */
+.topbar-v3__lang-slot {
+  display: flex;
+  align-items: center;
+}
+
+/* Generic icon-only button for the topbar (settings, theme) */
+.topbar-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    color var(--duration-fast),
+    background var(--duration-fast),
+    border-color var(--duration-fast);
+}
+
+.topbar-icon-btn:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+  border-color: var(--border);
+}
+
+.topbar-icon-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* =============================================================================
+   Main container — flex root for the two panels
+   ============================================================================= */
+
+.main-container {
+  grid-area: main;
+  display: flex;
+  overflow: hidden;
+  /* calc avoids topbar/statusbar height duplication */
+  height: calc(100vh - var(--shell-topbar-height) - var(--shell-statusbar-height));
+}
+
+@supports (height: 100dvh) {
+  .main-container {
+    height: calc(100dvh - var(--shell-topbar-height) - var(--shell-statusbar-height));
+  }
+}
+
+/* =============================================================================
+   Orientation — landscape vs portrait
+   ============================================================================= */
+
+/* Landscape default: side-by-side */
+.main-container.orientation-landscape {
+  flex-direction: row;
+}
+
+/* Portrait: stack vertically */
+.main-container.orientation-portrait {
+  flex-direction: column;
+}
+
+/* =============================================================================
+   Panels
+   ============================================================================= */
+
+.panel-dh,
+.panel-chat {
+  position: relative;
+  overflow: hidden;
+  /* Smooth transition for fullscreen switching */
+  transition:
+    flex 0.3s var(--ease-out),
+    opacity 0.2s ease,
+    min-width 0.3s var(--ease-out),
+    min-height 0.3s var(--ease-out);
+}
+
+/* ── Landscape panel sizing ──────────────────────────────────────────────── */
+
+.orientation-landscape .panel-dh {
+  flex: 1 1 0%;
+  min-width: 360px;
+  border-right: 1px solid var(--border);
+}
+
+.orientation-landscape .panel-chat {
+  flex: 1 1 0%;
+  min-width: 320px;
+}
+
+/* ── Portrait panel sizing ───────────────────────────────────────────────── */
+
+.orientation-portrait .panel-dh {
+  flex: 0 0 40vh;
+  min-height: 250px;
+  border-bottom: 1px solid var(--border);
+}
+
+.orientation-portrait .panel-chat {
+  flex: 1 1 0%;
+  min-height: 200px;
+}
+
+/* =============================================================================
+   Fullscreen transitions
+   The CSS class on .main-container drives which panel collapses.
+   ============================================================================= */
+
+/* ── DH fullscreen: hide chat panel ─────────────────────────────────────── */
+
+.layout-dh-fullscreen.orientation-landscape .panel-chat {
+  flex: 0 0 0px;
+  min-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.layout-dh-fullscreen.orientation-portrait .panel-chat {
+  flex: 0 0 0px;
+  min-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* DH panel takes full space */
+.layout-dh-fullscreen.orientation-landscape .panel-dh {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.layout-dh-fullscreen.orientation-portrait .panel-dh {
+  flex: 1 1 100%;
+  height: 100%;
+}
+
+/* ── Chat fullscreen: hide DH panel ─────────────────────────────────────── */
+
+.layout-chat-fullscreen.orientation-landscape .panel-dh {
+  flex: 0 0 0px;
+  min-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.layout-chat-fullscreen.orientation-portrait .panel-dh {
+  flex: 0 0 0px;
+  min-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* Chat panel takes full space */
+.layout-chat-fullscreen.orientation-landscape .panel-chat {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.layout-chat-fullscreen.orientation-portrait .panel-chat {
+  flex: 1 1 100%;
+  height: 100%;
+}
+
+/* =============================================================================
+   Fullscreen toggle button (per panel)
+   ============================================================================= */
+
+.panel-fullscreen-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 50;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;                     /* hidden by default */
+  transition:
+    opacity var(--duration-fast),
+    color var(--duration-fast),
+    background var(--duration-fast);
+}
+
+/* Reveal on panel hover or keyboard focus */
+.panel-dh:hover .panel-fullscreen-btn,
+.panel-dh:focus-within .panel-fullscreen-btn,
+.panel-chat:hover .panel-fullscreen-btn,
+.panel-chat:focus-within .panel-fullscreen-btn {
+  opacity: 1;
+}
+
+.panel-fullscreen-btn:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.panel-fullscreen-btn:focus-visible {
+  outline: none;
+  opacity: 1;
+  box-shadow: var(--focus-ring);
+}
+
+/* =============================================================================
+   Status dot (used in topbar-v3)
+   ============================================================================= */
+
+/* Inherits from layout.css .statusDot rules; override colour only */
+.statusDot.ok {
+  background-color: var(--ok);
+}
+
+/* =============================================================================
+   Camera PiP responsive (defined here to complement digital-human.css)
+   Canonical sizes are in digital-human.css; here we just repeat the breakpoints
+   so layout-v3.css is self-contained when imported independently.
+   ============================================================================= */
+
+@media (max-width: 767px), (max-width: 1023px) and (orientation: portrait) {
+  .camera-pip {
+    width: 100px;
+    height: 75px;
+  }
+}
+
+@media (min-width: 768px) and (orientation: landscape),
+       (min-width: 1024px) {
+  .camera-pip {
+    width: 160px;
+    height: 120px;
+  }
+}
+
+/* =============================================================================
+   Responsive breakpoints
+   ============================================================================= */
+
+/* Narrow viewports: collapse topbar right section label text */
+@media (max-width: 480px) {
+  .topbar-v3 {
+    padding: 0 10px;
+    gap: 8px;
+  }
+
+  .topbar-v3__lang-slot {
+    display: none; /* language selector accessible via settings on tiny screens */
+  }
+
+  .dh-identity__name {
+    font-size: 13px;
+    max-width: 120px;
+  }
+}
+
+/* =============================================================================
+   Reduced motion preference
+   ============================================================================= */
+
+@media (prefers-reduced-motion: reduce) {
+  .panel-dh,
+  .panel-chat {
+    transition: none;
+  }
+}

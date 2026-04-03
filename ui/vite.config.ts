@@ -31,6 +31,9 @@ export default defineConfig(() => {
       outDir: path.resolve(here, "../dist/control-ui"),
       emptyOutDir: true,
       sourcemap: true,
+      rollupOptions: {
+        external: ["@byteplus/rtc"],
+      },
     },
     server: {
       host: true,

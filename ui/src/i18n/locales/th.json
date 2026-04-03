@@ -1,0 +1,96 @@
+{
+  "app": {
+    "title": "WinClaw ผู้ช่วย AI",
+    "online": "ออนไลน์",
+    "offline": "ออฟไลน์",
+    "connecting": "กำลังเชื่อมต่อ..."
+  },
+  "topbar": {
+    "settings": "การตั้งค่า",
+    "theme": "ธีม",
+    "language": "ภาษา"
+  },
+  "dh": {
+    "clickToStart": "คลิกเพื่อเริ่มการสนทนา",
+    "startSession": "เริ่ม",
+    "endSession": "สิ้นสุด",
+    "microphone": "ไมโครโฟน",
+    "camera": "กล้อง",
+    "micOn": "ไมโครโฟนเปิดอยู่",
+    "micOff": "ไมโครโฟนปิดอยู่",
+    "camOn": "กล้องเปิดอยู่",
+    "camOff": "กล้องปิดอยู่",
+    "subtitle": "คำบรรยาย",
+    "connecting": "กำลังเชื่อมต่อกับมนุษย์ดิจิทัล...",
+    "connected": "เชื่อมต่อมนุษย์ดิจิทัลแล้ว",
+    "disconnected": "ตัดการเชื่อมต่อมนุษย์ดิจิทัล",
+    "error": "เกิดข้อผิดพลาดในการเชื่อมต่อ กรุณาลองใหม่",
+    "fullscreen": "เต็มหน้าจอ",
+    "exitFullscreen": "ออกจากโหมดเต็มหน้าจอ",
+    "aiSpeaking": "AI กำลังพูด...",
+    "listening": "กำลังฟัง...",
+    "processing": "กำลังประมวลผล...",
+    "statusConnecting": "กำลังเชื่อมต่อ...",
+    "statusConnected": "ถ่ายทอดสด",
+    "statusError": "ข้อผิดพลาด",
+    "statusDisconnected": "ออฟไลน์",
+    "avatarAlt": "อวตารมนุษย์ดิจิทัล",
+    "videoLabel": "วิดีโอมนุษย์ดิจิทัล",
+    "cameraPreviewLabel": "ตัวอย่างกล้อง",
+    "controlsLabel": "ควบคุมมนุษย์ดิจิทัล",
+    "panelLabel": "มนุษย์ดิจิทัล",
+    "collapseSubtitle": "ซ่อนคำบรรยาย",
+    "expandSubtitle": "แสดงคำบรรยาย"
+  },
+  "chat": {
+    "title": "ประวัติการสนทนา",
+    "inputPlaceholder": "พิมพ์ข้อความ...",
+    "send": "ส่ง",
+    "clear": "ล้าง",
+    "fullscreen": "เต็มหน้าจอ",
+    "exitFullscreen": "ออกจากโหมดเต็มหน้าจอ",
+    "voiceMessage": "ข้อความเสียง",
+    "textMessage": "ข้อความตัวอักษร",
+    "taskRunning": "กำลังดำเนินงาน...",
+    "taskSuccess": "งานเสร็จสิ้น",
+    "taskFailed": "งานล้มเหลว",
+    "attachImage": "แนบรูปภาพ",
+    "copyMessage": "คัดลอก",
+    "panelLabel": "แชท"
+  },
+  "settings": {
+    "title": "การตั้งค่า",
+    "general": "ทั่วไป",
+    "language": "ภาษา",
+    "theme": "รูปลักษณ์",
+    "themeDark": "มืด",
+    "themeLight": "สว่าง",
+    "themeAuto": "ตามระบบ",
+    "qwen": "โมเดลเสียง",
+    "qwenVoice": "เสียง",
+    "bytedance": "มนุษย์ดิจิทัล",
+    "bytedanceRole": "บทบาท",
+    "identity": "ข้อมูลตัวตน",
+    "memory": "หน่วยความจำ",
+    "advanced": "ขั้นสูง",
+    "save": "บันทึก",
+    "cancel": "ยกเลิก",
+    "saved": "บันทึกแล้ว"
+  },
+  "nav": {
+    "settings": "การตั้งค่า",
+    "theme": "สลับธีม"
+  },
+  "layout": {
+    "dhFullscreen": "มนุษย์ดิจิทัลเต็มหน้าจอ",
+    "chatFullscreen": "แชทเต็มหน้าจอ",
+    "exitFullscreen": "ออกจากโหมดเต็มหน้าจอ"
+  },
+  "status": {
+    "connected": "เชื่อมต่อแล้ว",
+    "disconnected": "ยังไม่ได้เชื่อมต่อ",
+    "dhOnline": "มนุษย์ดิจิทัล: ออนไลน์",
+    "dhOffline": "มนุษย์ดิจิทัล: ออฟไลน์",
+    "model": "โมเดล"
+  }
+}

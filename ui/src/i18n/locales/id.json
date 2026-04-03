@@ -1,0 +1,96 @@
+{
+  "app": {
+    "title": "WinClaw Asisten AI",
+    "online": "Online",
+    "offline": "Offline",
+    "connecting": "Menghubungkan..."
+  },
+  "topbar": {
+    "settings": "Pengaturan",
+    "theme": "Tema",
+    "language": "Bahasa"
+  },
+  "dh": {
+    "clickToStart": "Klik untuk memulai percakapan",
+    "startSession": "Mulai",
+    "endSession": "Selesai",
+    "microphone": "Mikrofon",
+    "camera": "Kamera",
+    "micOn": "Mikrofon aktif",
+    "micOff": "Mikrofon nonaktif",
+    "camOn": "Kamera aktif",
+    "camOff": "Kamera nonaktif",
+    "subtitle": "Teks terjemahan",
+    "connecting": "Menghubungkan ke manusia digital...",
+    "connected": "Manusia digital terhubung",
+    "disconnected": "Manusia digital terputus",
+    "error": "Kesalahan koneksi, coba lagi",
+    "fullscreen": "Layar penuh",
+    "exitFullscreen": "Keluar layar penuh",
+    "aiSpeaking": "AI sedang berbicara...",
+    "listening": "Sedang mendengarkan...",
+    "processing": "Memproses...",
+    "statusConnecting": "Menghubungkan...",
+    "statusConnected": "Siaran langsung",
+    "statusError": "Kesalahan",
+    "statusDisconnected": "Offline",
+    "avatarAlt": "Avatar manusia digital",
+    "videoLabel": "Video manusia digital",
+    "cameraPreviewLabel": "Pratinjau kamera",
+    "controlsLabel": "Kontrol manusia digital",
+    "panelLabel": "Manusia digital",
+    "collapseSubtitle": "Sembunyikan teks",
+    "expandSubtitle": "Tampilkan teks"
+  },
+  "chat": {
+    "title": "Riwayat percakapan",
+    "inputPlaceholder": "Ketik pesan...",
+    "send": "Kirim",
+    "clear": "Hapus",
+    "fullscreen": "Layar penuh",
+    "exitFullscreen": "Keluar layar penuh",
+    "voiceMessage": "Pesan suara",
+    "textMessage": "Pesan teks",
+    "taskRunning": "Tugas sedang berjalan...",
+    "taskSuccess": "Tugas selesai",
+    "taskFailed": "Tugas gagal",
+    "attachImage": "Lampirkan gambar",
+    "copyMessage": "Salin",
+    "panelLabel": "Obrolan"
+  },
+  "settings": {
+    "title": "Pengaturan",
+    "general": "Umum",
+    "language": "Bahasa",
+    "theme": "Tampilan",
+    "themeDark": "Gelap",
+    "themeLight": "Terang",
+    "themeAuto": "Ikuti sistem",
+    "qwen": "Model suara",
+    "qwenVoice": "Suara",
+    "bytedance": "Manusia digital",
+    "bytedanceRole": "Peran",
+    "identity": "Identitas",
+    "memory": "Memori",
+    "advanced": "Lanjutan",
+    "save": "Simpan",
+    "cancel": "Batal",
+    "saved": "Tersimpan"
+  },
+  "nav": {
+    "settings": "Pengaturan",
+    "theme": "Ganti tema"
+  },
+  "layout": {
+    "dhFullscreen": "Manusia digital layar penuh",
+    "chatFullscreen": "Obrolan layar penuh",
+    "exitFullscreen": "Keluar layar penuh"
+  },
+  "status": {
+    "connected": "Terhubung",
+    "disconnected": "Tidak terhubung",
+    "dhOnline": "MD: Online",
+    "dhOffline": "MD: Offline",
+    "model": "Model"
+  }
+}

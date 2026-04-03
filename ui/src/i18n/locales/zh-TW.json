@@ -1,0 +1,96 @@
+{
+  "app": {
+    "title": "WinClaw AI 助理",
+    "online": "線上",
+    "offline": "離線",
+    "connecting": "連線中..."
+  },
+  "topbar": {
+    "settings": "設定",
+    "theme": "主題",
+    "language": "語言"
+  },
+  "dh": {
+    "clickToStart": "點擊開始對話",
+    "startSession": "開始對話",
+    "endSession": "結束對話",
+    "microphone": "麥克風",
+    "camera": "攝影機",
+    "micOn": "麥克風已開啟",
+    "micOff": "麥克風已關閉",
+    "camOn": "攝影機已開啟",
+    "camOff": "攝影機已關閉",
+    "subtitle": "字幕",
+    "connecting": "正在連接數位人...",
+    "connected": "數位人已連線",
+    "disconnected": "數位人已斷線",
+    "error": "連線錯誤，請重試",
+    "fullscreen": "全螢幕",
+    "exitFullscreen": "離開全螢幕",
+    "aiSpeaking": "AI 正在說話...",
+    "listening": "正在聆聽...",
+    "processing": "處理中...",
+    "statusConnecting": "連線中...",
+    "statusConnected": "直播中",
+    "statusError": "錯誤",
+    "statusDisconnected": "離線",
+    "avatarAlt": "數位人頭像",
+    "videoLabel": "數位人視訊串流",
+    "cameraPreviewLabel": "攝影機預覽",
+    "controlsLabel": "數位人控制列",
+    "panelLabel": "數位人",
+    "collapseSubtitle": "折疊字幕",
+    "expandSubtitle": "展開字幕"
+  },
+  "chat": {
+    "title": "對話記錄",
+    "inputPlaceholder": "輸入文字訊息...",
+    "send": "傳送",
+    "clear": "清除",
+    "fullscreen": "全螢幕",
+    "exitFullscreen": "離開全螢幕",
+    "voiceMessage": "語音訊息",
+    "textMessage": "文字訊息",
+    "taskRunning": "任務執行中...",
+    "taskSuccess": "任務已完成",
+    "taskFailed": "任務失敗",
+    "attachImage": "附加圖片",
+    "copyMessage": "複製",
+    "panelLabel": "聊天"
+  },
+  "settings": {
+    "title": "設定",
+    "general": "一般",
+    "language": "語言",
+    "theme": "外觀主題",
+    "themeDark": "深色",
+    "themeLight": "淺色",
+    "themeAuto": "跟隨系統",
+    "qwen": "語音模型",
+    "qwenVoice": "音色",
+    "bytedance": "數位人",
+    "bytedanceRole": "角色",
+    "identity": "身份設定",
+    "memory": "記憶設定",
+    "advanced": "進階",
+    "save": "儲存",
+    "cancel": "取消",
+    "saved": "已儲存"
+  },
+  "nav": {
+    "settings": "設定",
+    "theme": "切換主題"
+  },
+  "layout": {
+    "dhFullscreen": "數位人全螢幕",
+    "chatFullscreen": "聊天全螢幕",
+    "exitFullscreen": "退出全螢幕"
+  },
+  "status": {
+    "connected": "已連線",
+    "disconnected": "未連線",
+    "dhOnline": "數位人: 線上",
+    "dhOffline": "數位人: 離線",
+    "model": "模型"
+  }
+}

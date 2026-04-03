@@ -1,0 +1,96 @@
+{
+  "app": {
+    "title": "WinClaw AI 助理",
+    "online": "在线",
+    "offline": "离线",
+    "connecting": "连接中..."
+  },
+  "topbar": {
+    "settings": "设置",
+    "theme": "主题",
+    "language": "语言"
+  },
+  "dh": {
+    "clickToStart": "点击开始对话",
+    "startSession": "开始对话",
+    "endSession": "结束对话",
+    "microphone": "麦克风",
+    "camera": "摄像头",
+    "micOn": "麦克风已开启",
+    "micOff": "麦克风已关闭",
+    "camOn": "摄像头已开启",
+    "camOff": "摄像头已关闭",
+    "subtitle": "字幕",
+    "connecting": "正在连接数字人...",
+    "connected": "数字人已连接",
+    "disconnected": "数字人已断开",
+    "error": "连接出错，请重试",
+    "fullscreen": "全屏",
+    "exitFullscreen": "退出全屏",
+    "aiSpeaking": "AI 正在说话...",
+    "listening": "正在聆听...",
+    "processing": "处理中...",
+    "statusConnecting": "连接中...",
+    "statusConnected": "直播中",
+    "statusError": "错误",
+    "statusDisconnected": "离线",
+    "avatarAlt": "数字人头像",
+    "videoLabel": "数字人视频流",
+    "cameraPreviewLabel": "摄像头预览",
+    "controlsLabel": "数字人控制栏",
+    "panelLabel": "数字人",
+    "collapseSubtitle": "折叠字幕",
+    "expandSubtitle": "展开字幕"
+  },
+  "chat": {
+    "title": "对话记录",
+    "inputPlaceholder": "输入文字消息...",
+    "send": "发送",
+    "clear": "清空",
+    "fullscreen": "全屏",
+    "exitFullscreen": "退出全屏",
+    "voiceMessage": "语音消息",
+    "textMessage": "文字消息",
+    "taskRunning": "任务执行中...",
+    "taskSuccess": "任务已完成",
+    "taskFailed": "任务失败",
+    "attachImage": "添加图片",
+    "copyMessage": "复制",
+    "panelLabel": "聊天"
+  },
+  "settings": {
+    "title": "设置",
+    "general": "通用",
+    "language": "语言",
+    "theme": "外观主题",
+    "themeDark": "深色",
+    "themeLight": "浅色",
+    "themeAuto": "跟随系统",
+    "qwen": "语音模型",
+    "qwenVoice": "音色",
+    "bytedance": "数字人",
+    "bytedanceRole": "角色",
+    "identity": "身份设置",
+    "memory": "记忆设置",
+    "advanced": "高级",
+    "save": "保存",
+    "cancel": "取消",
+    "saved": "已保存"
+  },
+  "nav": {
+    "settings": "设置",
+    "theme": "切换主题"
+  },
+  "layout": {
+    "dhFullscreen": "数字人全屏",
+    "chatFullscreen": "聊天全屏",
+    "exitFullscreen": "退出全屏"
+  },
+  "status": {
+    "connected": "已连接",
+    "disconnected": "未连接",
+    "dhOnline": "数字人: 在线",
+    "dhOffline": "数字人: 离线",
+    "model": "模型"
+  }
+}

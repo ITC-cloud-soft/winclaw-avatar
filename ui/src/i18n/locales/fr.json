@@ -1,0 +1,96 @@
+{
+  "app": {
+    "title": "WinClaw Assistant IA",
+    "online": "En ligne",
+    "offline": "Hors ligne",
+    "connecting": "Connexion..."
+  },
+  "topbar": {
+    "settings": "Paramètres",
+    "theme": "Thème",
+    "language": "Langue"
+  },
+  "dh": {
+    "clickToStart": "Cliquez pour démarrer la conversation",
+    "startSession": "Démarrer",
+    "endSession": "Terminer",
+    "microphone": "Microphone",
+    "camera": "Caméra",
+    "micOn": "Microphone activé",
+    "micOff": "Microphone désactivé",
+    "camOn": "Caméra activée",
+    "camOff": "Caméra désactivée",
+    "subtitle": "Sous-titres",
+    "connecting": "Connexion à l'humain numérique...",
+    "connected": "Humain numérique connecté",
+    "disconnected": "Humain numérique déconnecté",
+    "error": "Erreur de connexion, veuillez réessayer",
+    "fullscreen": "Plein écran",
+    "exitFullscreen": "Quitter le plein écran",
+    "aiSpeaking": "L'IA parle...",
+    "listening": "Écoute en cours...",
+    "processing": "Traitement...",
+    "statusConnecting": "Connexion...",
+    "statusConnected": "En direct",
+    "statusError": "Erreur",
+    "statusDisconnected": "Hors ligne",
+    "avatarAlt": "Avatar de l'humain numérique",
+    "videoLabel": "Flux vidéo de l'humain numérique",
+    "cameraPreviewLabel": "Aperçu caméra",
+    "controlsLabel": "Commandes de l'humain numérique",
+    "panelLabel": "Humain numérique",
+    "collapseSubtitle": "Réduire les sous-titres",
+    "expandSubtitle": "Développer les sous-titres"
+  },
+  "chat": {
+    "title": "Conversation",
+    "inputPlaceholder": "Saisissez un message...",
+    "send": "Envoyer",
+    "clear": "Effacer",
+    "fullscreen": "Plein écran",
+    "exitFullscreen": "Quitter le plein écran",
+    "voiceMessage": "Message vocal",
+    "textMessage": "Message texte",
+    "taskRunning": "Tâche en cours...",
+    "taskSuccess": "Tâche terminée",
+    "taskFailed": "Échec de la tâche",
+    "attachImage": "Joindre une image",
+    "copyMessage": "Copier",
+    "panelLabel": "Chat"
+  },
+  "settings": {
+    "title": "Paramètres",
+    "general": "Général",
+    "language": "Langue",
+    "theme": "Apparence",
+    "themeDark": "Sombre",
+    "themeLight": "Clair",
+    "themeAuto": "Système",
+    "qwen": "Modèle vocal",
+    "qwenVoice": "Voix",
+    "bytedance": "Humain numérique",
+    "bytedanceRole": "Rôle",
+    "identity": "Identité",
+    "memory": "Mémoire",
+    "advanced": "Avancé",
+    "save": "Enregistrer",
+    "cancel": "Annuler",
+    "saved": "Enregistré"
+  },
+  "nav": {
+    "settings": "Paramètres",
+    "theme": "Changer le thème"
+  },
+  "layout": {
+    "dhFullscreen": "Humain numérique plein écran",
+    "chatFullscreen": "Chat plein écran",
+    "exitFullscreen": "Quitter le plein écran"
+  },
+  "status": {
+    "connected": "Connecté",
+    "disconnected": "Déconnecté",
+    "dhOnline": "HD: En ligne",
+    "dhOffline": "HD: Hors ligne",
+    "model": "Modèle"
+  }
+}

@@ -1,0 +1,96 @@
+{
+  "app": {
+    "title": "WinClaw Assistente IA",
+    "online": "Online",
+    "offline": "Offline",
+    "connecting": "A conectar..."
+  },
+  "topbar": {
+    "settings": "Configurações",
+    "theme": "Tema",
+    "language": "Idioma"
+  },
+  "dh": {
+    "clickToStart": "Clique para iniciar a conversa",
+    "startSession": "Iniciar",
+    "endSession": "Terminar",
+    "microphone": "Microfone",
+    "camera": "Câmera",
+    "micOn": "Microfone ligado",
+    "micOff": "Microfone desligado",
+    "camOn": "Câmera ligada",
+    "camOff": "Câmera desligada",
+    "subtitle": "Legendas",
+    "connecting": "A conectar ao humano digital...",
+    "connected": "Humano digital conectado",
+    "disconnected": "Humano digital desconectado",
+    "error": "Erro de ligação, tente novamente",
+    "fullscreen": "Ecrã inteiro",
+    "exitFullscreen": "Sair do ecrã inteiro",
+    "aiSpeaking": "IA a falar...",
+    "listening": "A ouvir...",
+    "processing": "A processar...",
+    "statusConnecting": "A conectar...",
+    "statusConnected": "Em direto",
+    "statusError": "Erro",
+    "statusDisconnected": "Offline",
+    "avatarAlt": "Avatar do humano digital",
+    "videoLabel": "Vídeo do humano digital",
+    "cameraPreviewLabel": "Pré-visualização da câmera",
+    "controlsLabel": "Controlos do humano digital",
+    "panelLabel": "Humano digital",
+    "collapseSubtitle": "Recolher legendas",
+    "expandSubtitle": "Expandir legendas"
+  },
+  "chat": {
+    "title": "Conversa",
+    "inputPlaceholder": "Escreva uma mensagem...",
+    "send": "Enviar",
+    "clear": "Limpar",
+    "fullscreen": "Ecrã inteiro",
+    "exitFullscreen": "Sair do ecrã inteiro",
+    "voiceMessage": "Mensagem de voz",
+    "textMessage": "Mensagem de texto",
+    "taskRunning": "Tarefa em execução...",
+    "taskSuccess": "Tarefa concluída",
+    "taskFailed": "Tarefa falhada",
+    "attachImage": "Anexar imagem",
+    "copyMessage": "Copiar",
+    "panelLabel": "Chat"
+  },
+  "settings": {
+    "title": "Configurações",
+    "general": "Geral",
+    "language": "Idioma",
+    "theme": "Aparência",
+    "themeDark": "Escuro",
+    "themeLight": "Claro",
+    "themeAuto": "Sistema",
+    "qwen": "Modelo de voz",
+    "qwenVoice": "Voz",
+    "bytedance": "Humano digital",
+    "bytedanceRole": "Papel",
+    "identity": "Identidade",
+    "memory": "Memória",
+    "advanced": "Avançado",
+    "save": "Guardar",
+    "cancel": "Cancelar",
+    "saved": "Guardado"
+  },
+  "nav": {
+    "settings": "Configurações",
+    "theme": "Mudar tema"
+  },
+  "layout": {
+    "dhFullscreen": "Humano digital ecrã inteiro",
+    "chatFullscreen": "Chat ecrã inteiro",
+    "exitFullscreen": "Sair do ecrã inteiro"
+  },
+  "status": {
+    "connected": "Ligado",
+    "disconnected": "Desligado",
+    "dhOnline": "HD: Online",
+    "dhOffline": "HD: Offline",
+    "model": "Modelo"
+  }
+}

@@ -1,0 +1,96 @@
+{
+  "app": {
+    "title": "WinClaw KI-Assistent",
+    "online": "Online",
+    "offline": "Offline",
+    "connecting": "Verbinde..."
+  },
+  "topbar": {
+    "settings": "Einstellungen",
+    "theme": "Design",
+    "language": "Sprache"
+  },
+  "dh": {
+    "clickToStart": "Klicken, um Gespräch zu starten",
+    "startSession": "Starten",
+    "endSession": "Beenden",
+    "microphone": "Mikrofon",
+    "camera": "Kamera",
+    "micOn": "Mikrofon aktiv",
+    "micOff": "Mikrofon deaktiviert",
+    "camOn": "Kamera aktiv",
+    "camOff": "Kamera deaktiviert",
+    "subtitle": "Untertitel",
+    "connecting": "Verbindung zu digitalem Menschen...",
+    "connected": "Digitaler Mensch verbunden",
+    "disconnected": "Verbindung getrennt",
+    "error": "Verbindungsfehler – bitte erneut versuchen",
+    "fullscreen": "Vollbild",
+    "exitFullscreen": "Vollbild beenden",
+    "aiSpeaking": "KI spricht...",
+    "listening": "Höre zu...",
+    "processing": "Verarbeite...",
+    "statusConnecting": "Verbinde...",
+    "statusConnected": "Live",
+    "statusError": "Fehler",
+    "statusDisconnected": "Offline",
+    "avatarAlt": "Avatar des digitalen Menschen",
+    "videoLabel": "Videostream des digitalen Menschen",
+    "cameraPreviewLabel": "Kameravorschau",
+    "controlsLabel": "Steuerung digitaler Mensch",
+    "panelLabel": "Digitaler Mensch",
+    "collapseSubtitle": "Untertitel einklappen",
+    "expandSubtitle": "Untertitel ausklappen"
+  },
+  "chat": {
+    "title": "Gespräch",
+    "inputPlaceholder": "Nachricht eingeben...",
+    "send": "Senden",
+    "clear": "Leeren",
+    "fullscreen": "Vollbild",
+    "exitFullscreen": "Vollbild beenden",
+    "voiceMessage": "Sprachnachricht",
+    "textMessage": "Textnachricht",
+    "taskRunning": "Aufgabe läuft...",
+    "taskSuccess": "Aufgabe abgeschlossen",
+    "taskFailed": "Aufgabe fehlgeschlagen",
+    "attachImage": "Bild anhängen",
+    "copyMessage": "Kopieren",
+    "panelLabel": "Chat"
+  },
+  "settings": {
+    "title": "Einstellungen",
+    "general": "Allgemein",
+    "language": "Sprache",
+    "theme": "Darstellung",
+    "themeDark": "Dunkel",
+    "themeLight": "Hell",
+    "themeAuto": "System",
+    "qwen": "Sprachmodell",
+    "qwenVoice": "Stimme",
+    "bytedance": "Digitaler Mensch",
+    "bytedanceRole": "Rolle",
+    "identity": "Identität",
+    "memory": "Speicher",
+    "advanced": "Erweitert",
+    "save": "Speichern",
+    "cancel": "Abbrechen",
+    "saved": "Gespeichert"
+  },
+  "nav": {
+    "settings": "Einstellungen",
+    "theme": "Design wechseln"
+  },
+  "layout": {
+    "dhFullscreen": "Digitaler Mensch Vollbild",
+    "chatFullscreen": "Chat Vollbild",
+    "exitFullscreen": "Vollbild beenden"
+  },
+  "status": {
+    "connected": "Verbunden",
+    "disconnected": "Getrennt",
+    "dhOnline": "DM: Online",
+    "dhOffline": "DM: Offline",
+    "model": "Modell"
+  }
+}

@@ -313,6 +313,18 @@ importers:
         specifier: 1.58.2
         version: 1.58.2
 
+  extensions/digital-human:
+    dependencies:
+      '@byteplus/rtc':
+        specifier: ^4.66.0
+        version: 4.68.2
+      ws:
+        specifier: ^8.19.0
+        version: 8.19.0
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
+
   extensions/discord: {}
 
   extensions/feishu:
@@ -854,6 +866,9 @@ packages:
 
   '@buape/carbon@0.0.0-beta-20260216184201':
     resolution: {integrity: sha512-u5mgYcigfPVqT7D9gVTGd+3YSflTreQmrWog7ORbb0z5w9eT8ft4rJOdw9fGwr75zMu9kXpSBaAcY2eZoJFSdA==}
+
+  '@byteplus/rtc@4.68.2':
+    resolution: {integrity: sha512-ZX4YvFAtS2V76LJ6laCnW5VNDh0MBbPnCjlriCQsYPiYciedCZ+TynJAwgNlpXEuTlHd0CpyYewjeNzCYa6X+w==}
 
   '@cacheable/memory@2.0.7':
     resolution: {integrity: sha512-RbxnxAMf89Tp1dLhXMS7ceft/PGsDl1Ip7T20z5nZ+pwIAsQ1p2izPjVG69oCLv/jfQ7HDPHTWK0c9rcAWXN3A==}
@@ -6989,6 +7004,10 @@ snapshots:
       - node-opus
       - opusscript
       - utf-8-validate
+
+  '@byteplus/rtc@4.68.2':
+    dependencies:
+      eventemitter3: 4.0.7
 
   '@cacheable/memory@2.0.7':
     dependencies:

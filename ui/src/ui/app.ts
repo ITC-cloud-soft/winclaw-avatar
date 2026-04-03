@@ -110,6 +110,14 @@ export class WinClawApp extends LitElement {
   @state() tab: Tab = "chat";
   @state() onboarding = resolveOnboardingMode();
   @state() connected = false;
+  @state() dhConnectionStatus: string = "disconnected";
+  @state() dhMicEnabled = true;
+  @state() dhCameraEnabled = false;
+  @state() dhSubtitleVisible = true;
+  @state() dhCurrentSubtitle = "";
+  @state() dhErrorMessage: string | null = null;
+  @state() dhLayoutMode: string = "split";
+  @state() dhIsThinking = false;
   @state() theme: ThemeMode = this.settings.theme ?? "system";
   @state() themeResolved: ResolvedTheme = "dark";
   @state() hello: GatewayHelloOk | null = null;
