@@ -204,7 +204,39 @@ export class GrcConnectionManager {
           log.info({ api_key_id: helloResult.api_key_id }, "API Key confirmed active by GRC");
         }
       } catch (err) {
-        log.warn(`A2A hello failed (non-fatal): ${(err as Error).message}`);
+        const errMsg = (err as Error).message;
+        log.warn(`A2A hello failed: ${errMsg}`);
+
+        // If 401/authentication error, token is revoked server-side.
+        // Re-register anonymously to get a fresh token.
+        if (errMsg.includes("401") || errMsg.includes("authentication") || errMsg.includes("invalid_token")) {
+          log.info("Token rejected by GRC, re-registering anonymously...");
+          try {
+            await this.registerAnonymous();
+            // Retry hello with the fresh token
+            const retryEmployee = {
+              id: config.grc?.employeeId,
+              name: config.grc?.employeeName,
+              email: config.grc?.employeeEmail,
+              workspacePath: config.grc?.workspaceHostPath,
+              gatewayPort: config.gateway?.port,
+              gatewayToken: config.gateway?.auth?.token,
+              containerId: process.env.HOSTNAME,
+            };
+            const retryResult = await this.client.hello(this.nodeId, platform, version, retryEmployee);
+            if (retryResult?.token) {
+              this.client.setAuthToken(retryResult.token);
+              await this.persistTokens(retryResult.token, retryResult.refreshToken);
+              log.info("Re-registered and hello succeeded with fresh token");
+            }
+            if (retryResult?.api_key) {
+              this.client.setApiKey(retryResult.api_key);
+              this.tier = "apikey";
+            }
+          } catch (reErr) {
+            log.warn(`Re-registration also failed (non-fatal): ${(reErr as Error).message}`);
+          }
+        }
       }
 
       // 4b. Register Agent Card with A2A Gateway (non-fatal)
