@@ -358,6 +358,11 @@ async function stopDhWsServer(): Promise<void> {
  * entry is enabled in `winclaw.json`.
  */
 export default function digitalHumanPlugin(api: WinClawPluginApiMinimal): void {
+  if (process.env.AVATAR_EXT_MEMORY_WIKI === "1") { void import("@winclaw-avatar/ext-memory-wiki/register").then((m) => (m as { register?: (a: unknown) => unknown }).register?.(api)).catch(() => {}); }
+  if (process.env.AVATAR_EXT_COMPACTION_REGISTRY === "1") { void import("@winclaw-avatar/ext-compaction/register").then((m) => (m as { register?: (a: unknown) => unknown }).register?.(api)).catch(() => {}); }
+  if (process.env.AVATAR_EXT_AGENT_CONTROLS === "1") { void import("@winclaw-avatar/avatar-agent-controls/register").then((m) => (m as { register?: (a: unknown) => unknown }).register?.(api)).catch(() => {}); }
+  if (process.env.AVATAR_EXT_MEDIA_INTENT === "1") { void import("@winclaw-avatar/ext-media-intent/register").then((m) => (m as { register?: (a: unknown) => unknown }).register?.(api)).catch(() => {}); }
+  if (process.env.AVATAR_EXT_CHANNEL_FASTPATH === "1") { void import("@winclaw-avatar/ext-channel-fastpath/register").then((m) => (m as { register?: (a: unknown) => unknown }).register?.(api)).catch(() => {}); }
   // 1. Load and validate plugin config
   const config = loadDigitalHumanConfig(api.pluginConfig ?? {});
 
