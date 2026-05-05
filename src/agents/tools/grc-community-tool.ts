@@ -23,8 +23,26 @@ const PostSchema = Type.Object(
   { additionalProperties: true },
 );
 
+function resolveGrcAuth(snapshot?: { grc?: { url?: string; auth?: { token?: string; apiKey?: string } } }) {
+  // Always reload from disk to pick up refreshed tokens / newly-issued API keys.
+  // Fall back to the snapshot only if loadConfig fails.
+  let config: { grc?: { url?: string; auth?: { token?: string; apiKey?: string } } };
+  try {
+    config = loadConfig() as typeof config;
+  } catch {
+    config = snapshot ?? {};
+  }
+  const baseUrl = config.grc?.url ?? GRC_DEFAULT_URL;
+  const apiKey = config.grc?.auth?.apiKey;
+  const authToken = config.grc?.auth?.token;
+  if (!apiKey && !authToken) {
+    throw new ToolInputError("GRC authentication required (no api key or token in winclaw.json).");
+  }
+  return { baseUrl, apiKey, authToken };
+}
+
 export function createGrcCommunityPostTool(options?: {
-  config?: { grc?: { url?: string; auth?: { token?: string } } };
+  config?: { grc?: { url?: string; auth?: { token?: string; apiKey?: string } } };
 }): AnyAgentTool {
   return {
     label: "GRC Community Post",
@@ -48,16 +66,13 @@ POST TYPES: problem, solution, evolution, experience, alert, discussion`,
       const body = readStringParam(params, "body", { required: true });
       const tags = (params.tags as string[] | undefined) ?? [];
 
-      const config = options?.config ?? loadConfig();
-      const baseUrl = config.grc?.url ?? GRC_DEFAULT_URL;
-      const authToken = config.grc?.auth?.token;
-      if (!authToken) throw new ToolInputError("GRC authentication required.");
+      const { baseUrl, apiKey, authToken } = resolveGrcAuth(options?.config);
 
       const identity = loadOrCreateDeviceIdentity();
       const nodeId = identity.deviceId;
       if (!nodeId) throw new ToolInputError("Device identity not available.");
 
-      const client = new GrcClient({ baseUrl, authToken });
+      const client = new GrcClient({ baseUrl, apiKey, authToken });
       const result = await client.communityPost({
         node_id: nodeId,
         channel,
@@ -103,16 +118,13 @@ USE THIS TOOL TO:
       const channel = readStringParam(params, "channel");
       const limit = (params.limit as number | undefined) ?? 10;
 
-      const config = options?.config ?? loadConfig();
-      const baseUrl = config.grc?.url ?? GRC_DEFAULT_URL;
-      const authToken = config.grc?.auth?.token;
-      if (!authToken) throw new ToolInputError("GRC authentication required.");
+      const { baseUrl, apiKey, authToken } = resolveGrcAuth(options?.config);
 
       const identity = loadOrCreateDeviceIdentity();
       const nodeId = identity.deviceId;
       if (!nodeId) throw new ToolInputError("Device identity not available.");
 
-      const client = new GrcClient({ baseUrl, authToken });
+      const client = new GrcClient({ baseUrl, apiKey, authToken });
       const result = await client.communityFeed({
         node_id: nodeId,
         sort,
@@ -148,16 +160,13 @@ export function createGrcCommunityReplyTool(options?: {
       const postId = readStringParam(params, "post_id", { required: true });
       const content = readStringParam(params, "content", { required: true });
 
-      const config = options?.config ?? loadConfig();
-      const baseUrl = config.grc?.url ?? GRC_DEFAULT_URL;
-      const authToken = config.grc?.auth?.token;
-      if (!authToken) throw new ToolInputError("GRC authentication required.");
+      const { baseUrl, apiKey, authToken } = resolveGrcAuth(options?.config);
 
       const identity = loadOrCreateDeviceIdentity();
       const nodeId = identity.deviceId;
       if (!nodeId) throw new ToolInputError("Device identity not available.");
 
-      const client = new GrcClient({ baseUrl, authToken });
+      const client = new GrcClient({ baseUrl, apiKey, authToken });
       const result = await client.communityReply({ node_id: nodeId, post_id: postId, content });
 
       return jsonResult(result);
@@ -188,16 +197,13 @@ export function createGrcCommunityVoteTool(options?: {
       const postId = readStringParam(params, "post_id", { required: true });
       const direction = readStringParam(params, "direction", { required: true }) as "up" | "down";
 
-      const config = options?.config ?? loadConfig();
-      const baseUrl = config.grc?.url ?? GRC_DEFAULT_URL;
-      const authToken = config.grc?.auth?.token;
-      if (!authToken) throw new ToolInputError("GRC authentication required.");
+      const { baseUrl, apiKey, authToken } = resolveGrcAuth(options?.config);
 
       const identity = loadOrCreateDeviceIdentity();
       const nodeId = identity.deviceId;
       if (!nodeId) throw new ToolInputError("Device identity not available.");
 
-      const client = new GrcClient({ baseUrl, authToken });
+      const client = new GrcClient({ baseUrl, apiKey, authToken });
       const result = await client.communityVote({ node_id: nodeId, post_id: postId, direction });
 
       return jsonResult(result);

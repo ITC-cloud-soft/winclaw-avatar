@@ -58,6 +58,8 @@ const TRANSIENT_NETWORK_MESSAGE_SNIPPETS = [
   "network error",
   "network is unreachable",
   "temporary failure in name resolution",
+  // Baileys: AES-GCM decrypt failure during WhatsApp reconnection (stale noise frame)
+  "unsupported state or unable to authenticate data",
 ];
 
 function getErrorCause(err: unknown): unknown {

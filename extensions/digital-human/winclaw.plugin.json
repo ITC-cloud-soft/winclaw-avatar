@@ -115,8 +115,8 @@
         "additionalProperties": false,
         "properties": {
           "apiKey":     { "type": "string", "description": "DashScope API Key (use ${DASHSCOPE_API_KEY})" },
-          "model":      { "type": "string", "default": "qwen3-omni-flash-realtime" },
-          "voice":      { "type": "string", "default": "Cherry", "enum": ["Cherry", "Serena", "Ethan", "Chelsie"] },
+          "model":      { "type": "string", "default": "qwen3.5-omni-flash-realtime" },
+          "voice":      { "type": "string", "default": "Serena", "description": "Qwen3.5-omni-flash-realtime voice. Chinese: Cherry/Serena/Ethan/Chelsie/Aura/Breeze/Maple/River/Amber/Cove/Sage/Willow. English: Aria/Bella/Claire/Daniel/Eric/Frank/Grace/Henry/Ivy/Jack/Kate/Leo. Multilingual: Luna." },
           "voiceModel": { "type": "string", "default": "gummy-realtime-v1" },
           "serverVad":  { "type": "boolean", "default": true }
         },
@@ -177,6 +177,15 @@
         "properties": {
           "timeoutMinutes": { "type": "integer", "default": 30, "minimum": 5 },
           "maxConcurrent":  { "type": "integer", "default": 1, "minimum": 1, "maximum": 5 }
+        }
+      },
+      "dhTool": {
+        "type": "object",
+        "description": "Async receipt pattern — timeouts for DH agent tool dispatch (ask_winclaw / task_run / channel_send).",
+        "additionalProperties": false,
+        "properties": {
+          "earlyTimeoutMs": { "type": "integer", "default": 15000, "minimum": 1000, "maximum": 120000, "description": "Return {receipt, user_message:'確認中'} to Qwen after this deadline. Agent keeps running in background." },
+          "lateTimeoutMs":  { "type": "integer", "default": 600000, "minimum": 30000, "maximum": 1800000, "description": "How long after earlyTimeoutMs to keep waiting for the real agent reply before abandoning." }
         }
       }
     },

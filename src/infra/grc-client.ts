@@ -13,6 +13,8 @@ const log: SubsystemLogger = createSubsystemLogger("infra/grc-client");
 export type GrcClientConfig = {
   baseUrl: string;
   authToken?: string;
+  /** API key for programmatic auth (takes precedence over authToken). */
+  apiKey?: string;
   /** Request timeout in ms. Default: 15 000. */
   timeout?: number;
   /** Max retry attempts on transient failures. Default: 5. */
@@ -245,6 +247,7 @@ export class GrcClient {
   constructor(config: GrcClientConfig) {
     this.baseUrl = config.baseUrl.replace(/\/+$/, "");
     this.authToken = config.authToken;
+    if (config.apiKey) this.apiKey = config.apiKey;
     this.timeout = config.timeout ?? 15_000;
     this.maxRetries = config.maxRetries ?? 5;
   }

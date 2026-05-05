@@ -18,6 +18,7 @@ import { healthHandlers } from "./server-methods/health.js";
 import { logsHandlers } from "./server-methods/logs.js";
 import { modelsHandlers } from "./server-methods/models.js";
 import { nodeHandlers } from "./server-methods/nodes.js";
+import { notifyDhHandlers } from "./server-methods/notify-dh.js";
 import { personalInfoHandlers } from "./server-methods/personal-info.js";
 import { systemDialogHandlers } from "./server-methods/system-dialogs.js";
 import { pushHandlers } from "./server-methods/push.js";
@@ -88,6 +89,7 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...systemHandlers,
   ...updateHandlers,
   ...nodeHandlers,
+  ...notifyDhHandlers,
   ...pushHandlers,
   ...sendHandlers,
   ...usageHandlers,

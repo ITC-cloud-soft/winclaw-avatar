@@ -1,14 +1,19 @@
 /**
- * @fileoverview TTS via DashScope CosyVoice WebSocket streaming API.
+ * @fileoverview TTS via qwen3-omni-flash HTTP streaming API.
  *
- * Uses cosyvoice-v1 for pure TTS. First-chunk latency <1s, 16kHz PCM16.
- * Protocol matches DashScope Python SDK exactly.
+ * Uses the OpenAI-compatible endpoint with `modalities: ["text", "audio"]`
+ * and `stream: true`. Outputs 24kHz WAV audio chunks which are decoded to
+ * raw PCM16 before passing to the callback.
+ *
+ * Replaces the previous CosyVoice WebSocket implementation to gain:
+ *   - 55 voice presets (Cherry, Tina, Serena, Ethan, etc.)
+ *   - Native multilingual TTS (Chinese, Japanese, English, Korean, …)
+ *   - ~1s first-chunk latency with streaming
  */
 
-import WebSocket from "ws";
-import { randomUUID } from "crypto";
+import https from "https";
 
-const DASHSCOPE_WS_URL = "wss://dashscope.aliyuncs.com/api-ws/v1/inference/speech-synthesizer";
+const DASHSCOPE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
 
 export interface TtsConfig {
   apiKey: string;
@@ -18,116 +23,156 @@ export interface TtsConfig {
 
 export type TtsAudioCallback = (pcm: Buffer, sampleRate: number) => void;
 
+/** Qwen3-omni-flash supported voices (subset — 55 total). */
 export const TTS_VOICES: Array<{ id: string; label: string }> = [
-  { id: "longxiaochun", label: "小春·温柔" },
-  { id: "longxiaoxia", label: "小夏·活泼" },
-  { id: "longxiaoqian", label: "小芊·知性" },
-  { id: "longwan", label: "小婉·优雅" },
-  { id: "longyue", label: "小悦·甜美" },
-  { id: "longtong", label: "小彤·自然" },
-  { id: "longxiaobai", label: "小白·沉稳" },
-  { id: "longshu", label: "书生·儒雅" },
-  { id: "longshuo", label: "小硕·清朗" },
-  { id: "longlaotie", label: "老铁·浑厚" },
-  { id: "longjielidou", label: "杰力豆·童声" },
-  { id: "loongstella", label: "Stella·EN♀" },
-  { id: "loongbella", label: "Bella·EN♀" },
+  // Chinese Female
+  { id: "Cherry", label: "Cherry·甜美♀" },
+  { id: "Tina", label: "Tina·温柔♀" },
+  { id: "Cindy", label: "Cindy·活泼♀" },
+  { id: "Serena", label: "Serena·知性♀" },
+  // Chinese Male
+  { id: "Ethan", label: "Ethan·沉稳♂" },
+  { id: "Chelsie", label: "Chelsie·清朗♂" },
+  // English
+  { id: "Stella", label: "Stella·EN♀" },
+  { id: "Bella", label: "Bella·EN♀" },
 ];
 
+/** TTS system prompt — instructs the model to read text verbatim. */
+const TTS_SYSTEM_PROMPT =
+  "你是一个语音朗读助手。请严格原样朗读用户提供的文字，" +
+  "不要添加、修改、解释或扩展任何内容。只朗读，不回答。";
+
+/**
+ * Synthesize speech from text using qwen3-omni-flash streaming API.
+ *
+ * Audio arrives as base64-encoded WAV chunks in SSE delta events.
+ * Each chunk is decoded and the raw PCM16 payload (skipping WAV headers)
+ * is forwarded to `onAudio` at 24 kHz sample rate.
+ *
+ * @param text     Text to synthesize.
+ * @param config   API key, voice, and optional model override.
+ * @param onAudio  Callback receiving PCM16 buffers at 24 kHz.
+ */
 export async function synthesizeSpeech(
   text: string,
   config: TtsConfig,
   onAudio: TtsAudioCallback,
 ): Promise<void> {
-  const model = config.model ?? "cosyvoice-v1";
-  const voice = config.voice ?? "longxiaochun";
-  const sampleRate = 16_000;
-  const taskId = randomUUID().replace(/-/g, "");
+  const model = config.model ?? "qwen3-omni-flash";
+  const voice = config.voice ?? "Serena";
+  const OUTPUT_SAMPLE_RATE = 24_000;
+
+  const body = JSON.stringify({
+    model,
+    messages: [
+      { role: "system", content: TTS_SYSTEM_PROMPT },
+      { role: "user", content: text },
+    ],
+    stream: true,
+    stream_options: { include_usage: true },
+    modalities: ["text", "audio"],
+    audio: { voice, format: "wav" },
+    enable_thinking: false,
+  });
+
+  const startTime = Date.now();
+  let totalAudioBytes = 0;
+  let audioChunks = 0;
+  let firstChunkMs = 0;
 
   return new Promise<void>((resolve, reject) => {
-    const ws = new WebSocket(DASHSCOPE_WS_URL, {
-      headers: { Authorization: `Bearer ${config.apiKey}` },
-    });
+    const url = new URL(DASHSCOPE_URL);
 
-    let totalBytes = 0;
-    let settled = false;
-    let startedOk = false;
-    const startTime = Date.now();
-
-    const finish = (err?: Error) => {
-      if (settled) return;
-      settled = true;
-      try { ws.close(); } catch {}
-      if (err) {
-        console.error(`[TTS] Error: ${err.message}`);
-        reject(err);
-      } else {
-        const elapsed = Date.now() - startTime;
-        console.log(`[TTS] Done: ${totalBytes} bytes (${(totalBytes / 2 / sampleRate).toFixed(1)}s audio, ${elapsed}ms wall)`);
-        resolve();
-      }
-    };
-
-    const timer = setTimeout(() => finish(new Error("TTS timeout 30s")), 30_000);
-
-    ws.on("open", () => {
-      console.log(`[TTS] WS open, sending run-task + text: "${text.substring(0, 30)}..." voice=${voice}`);
-
-      // run-task
-      ws.send(JSON.stringify({
-        header: { action: "run-task", task_id: taskId, streaming: "duplex" },
-        payload: {
-          model, task_group: "audio", task: "tts", function: "SpeechSynthesizer",
-          input: {},
-          parameters: { voice, volume: 50, text_type: "PlainText", sample_rate: sampleRate, rate: 1.0, format: "pcm", pitch: 1.0 },
+    const req = https.request(
+      {
+        hostname: url.hostname,
+        path: url.pathname,
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${config.apiKey}`,
         },
-      }));
+      },
+      (res) => {
+        let sseBuffer = "";
 
-      // Send text immediately (don't wait for task-started)
-      ws.send(JSON.stringify({
-        header: { action: "continue-task", task_id: taskId, streaming: "duplex" },
-        payload: { model, task_group: "audio", task: "tts", function: "SpeechSynthesizer", input: { text } },
-      }));
+        res.on("data", (chunk: Buffer) => {
+          sseBuffer += chunk.toString();
 
-      // Finish
-      ws.send(JSON.stringify({
-        header: { action: "finish-task", task_id: taskId, streaming: "duplex" },
-        payload: { input: {} },
-      }));
-    });
+          // Process complete SSE lines
+          const lines = sseBuffer.split("\n");
+          sseBuffer = lines.pop() || ""; // keep incomplete last line
 
-    ws.on("message", (data: WebSocket.RawData) => {
-      const buf = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            const json = line.slice(6).trim();
+            if (json === "[DONE]") continue;
 
-      // All messages come as binary frames. Check if it's JSON (starts with '{')
-      if (buf[0] === 0x7B) { // '{' character
-        try {
-          const msg = JSON.parse(buf.toString("utf-8")) as Record<string, unknown>;
-          const header = msg.header as Record<string, unknown> | undefined;
-          const event = header?.event as string | undefined;
+            try {
+              const obj = JSON.parse(json);
+              const delta = obj.choices?.[0]?.delta;
 
-          if (event === "task-started") {
-            startedOk = true;
-            console.log("[TTS] task-started");
-          } else if (event === "task-finished") {
-            clearTimeout(timer);
-            finish();
-          } else if (event === "task-failed") {
-            clearTimeout(timer);
-            const errMsg = (header?.error_message as string) ?? "TTS task failed";
-            finish(new Error(errMsg));
+              // Audio data chunk
+              if (delta?.audio?.data) {
+                const b64 = delta.audio.data as string;
+                const wavBuf = Buffer.from(b64, "base64");
+
+                // Extract raw PCM from WAV: skip header on ANY chunk that starts
+                // with "RIFF" (the API may embed headers in multiple chunks).
+                let pcm: Buffer;
+                if (wavBuf.length > 44 && wavBuf.toString("ascii", 0, 4) === "RIFF") {
+                  pcm = wavBuf.subarray(44);
+                } else {
+                  pcm = wavBuf;
+                }
+                if (audioChunks === 0) firstChunkMs = Date.now() - startTime;
+
+                if (pcm.length > 0) {
+                  audioChunks++;
+                  totalAudioBytes += pcm.length;
+                  onAudio(pcm, OUTPUT_SAMPLE_RATE);
+                }
+              }
+
+              // Check for errors
+              if (obj.error) {
+                reject(new Error(`TTS API error: ${obj.error.message || JSON.stringify(obj.error)}`));
+                return;
+              }
+            } catch {
+              // Ignore parse errors for malformed SSE lines
+            }
           }
-          // result-generated events are metadata, skip
-        } catch {}
-        return;
-      }
+        });
 
-      // Raw PCM audio
-      totalBytes += buf.length;
-      onAudio(buf, sampleRate);
+        res.on("end", () => {
+          const elapsed = Date.now() - startTime;
+          const durationSec = totalAudioBytes / (OUTPUT_SAMPLE_RATE * 2); // 16-bit = 2 bytes/sample
+          console.log(
+            `[TTS] Done: ${totalAudioBytes} bytes (${durationSec.toFixed(1)}s audio, ` +
+            `${audioChunks} chunks, first@${firstChunkMs}ms, wall=${elapsed}ms) voice=${voice}`
+          );
+          resolve();
+        });
+
+        res.on("error", (err) => {
+          reject(new Error(`TTS stream error: ${err.message}`));
+        });
+      }
+    );
+
+    req.on("error", (err) => {
+      reject(new Error(`TTS request error: ${err.message}`));
     });
 
-    ws.on("error", (err) => { clearTimeout(timer); finish(err); });
-    ws.on("close", () => { clearTimeout(timer); if (!settled) finish(); });
+    req.setTimeout(30_000, () => {
+      req.destroy();
+      reject(new Error("TTS timeout 30s"));
+    });
+
+    console.log(`[TTS] Sending qwen3-omni-flash TTS: "${text.substring(0, 40)}..." voice=${voice}`);
+    req.write(body);
+    req.end();
   });
 }

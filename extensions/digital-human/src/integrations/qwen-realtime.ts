@@ -1,6 +1,6 @@
 /**
  * @file qwen-realtime.ts
- * @description WebSocket client for the Qwen3-omni-flash-realtime API (DashScope).
+ * @description WebSocket client for the Qwen3.5-omni Realtime API (DashScope).
  *
  * Implements the OpenAI Realtime API compatible protocol used by DashScope's
  * `wss://dashscope.aliyuncs.com/api-ws/v1/inference` endpoint. Ported from
@@ -21,6 +21,41 @@
 
 import { EventEmitter } from "node:events";
 import WebSocket from "ws";
+import { DEFAULT_VOICE } from "./qwen-voices.js";
+
+// ---------------------------------------------------------------------------
+// Function-calling / tool types
+// ---------------------------------------------------------------------------
+
+/** JSON-schema style parameter block for a function tool. */
+export interface QwenToolParameter {
+  type: "object";
+  properties: Record<string, unknown>;
+  required?: string[];
+}
+
+/**
+ * Tool definition sent inside `session.update.tools`.
+ *
+ * The Qwen 3.5 Realtime API expects flat function definitions (no nested
+ * `function` envelope) — see reference implementation.
+ */
+export interface QwenToolDefinition {
+  type: "function";
+  name: string;
+  description: string;
+  parameters: QwenToolParameter;
+}
+
+/** Completed function call event emitted by the Qwen server. */
+export interface QwenFunctionCall {
+  /** Opaque id used to correlate the result back to the call. */
+  callId: string;
+  /** Tool name as registered in {@link QwenToolDefinition.name}. */
+  name: string;
+  /** JSON-encoded arguments string — NOT parsed; consumer decides how to parse. */
+  argumentsJson: string;
+}
 
 // ---------------------------------------------------------------------------
 // Public configuration types
@@ -38,13 +73,13 @@ export interface QwenConfig {
 
   /**
    * Model identifier.
-   * @default "qwen3-omni-flash-realtime"
+   * @default "qwen3.5-omni-flash-realtime"
    */
   model?: string;
 
   /**
    * TTS voice name for the AI response audio.
-   * @default "Cherry"
+   * @default "Serena"
    */
   voice?: string;
 
@@ -126,6 +161,14 @@ export interface QwenCallbacks {
 
   /** Called when the WebSocket session ends (close or unrecoverable error). */
   onSessionEnd?: () => void | Promise<void>;
+
+  /**
+   * Called when the model emits a completed function call.
+   *
+   * The consumer is responsible for executing the tool and returning the result
+   * via {@link QwenRealtimeClient.sendFunctionResult}.
+   */
+  onFunctionCall?: (call: QwenFunctionCall) => void | Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -225,7 +268,10 @@ interface UnknownEvent {
 // Client-to-server message builders (internal helpers)
 // ---------------------------------------------------------------------------
 
-/** Tool definition passed inside `session.update`. */
+/**
+ * @deprecated Use {@link QwenToolDefinition}. Retained for backwards-compat
+ * with callers that pre-dated Qwen 3.5 function calling.
+ */
 export interface QwenTool {
   type: "function";
   function: {
@@ -247,9 +293,13 @@ interface SessionUpdatePayload {
   input_audio_format?: string;
   output_audio_format?: string;
   input_audio_transcription?: { model: string };
-  turn_detection?: { type: string } | null;
+  turn_detection?:
+    | { type: string; interrupt_response?: boolean; create_response?: boolean }
+    | null;
   instructions?: string;
-  tools?: QwenTool[];
+  tools?: QwenToolDefinition[];
+  enable_search?: boolean;
+  search_options?: { enable_source?: boolean };
 }
 
 // ---------------------------------------------------------------------------
@@ -272,6 +322,7 @@ interface QwenClientEvents {
   userTranscript: [transcript: string];
   responseStarted: [];
   responseDone: [];
+  functionCall: [call: QwenFunctionCall];
   error: [error: Error];
 }
 
@@ -280,7 +331,7 @@ interface QwenClientEvents {
 // ---------------------------------------------------------------------------
 
 /**
- * WebSocket client for the Qwen3-omni-flash-realtime API (DashScope).
+ * WebSocket client for the Qwen3.5-omni Realtime API (DashScope).
  *
  * @example
  * ```ts
@@ -342,6 +393,14 @@ export class QwenRealtimeClient extends EventEmitter {
   private _isResponding = false;
 
   /**
+   * Latched when a caller requested a `response.create` while Qwen was
+   * already generating. Flushed on the next `response.done`. Prevents the
+   * "Conversation already has an active response" API error in Phase C's
+   * async-receipt flow (notification/tool-result injection during ACK).
+   */
+  private _pendingResponseCreate = false;
+
+  /**
    * When true, Qwen is used only for STT + TTS. VAD-triggered auto-responses
    * are immediately cancelled. Only explicit sendText("[TTS] ...") triggers audio.
    */
@@ -362,8 +421,18 @@ export class QwenRealtimeClient extends EventEmitter {
   private _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private _disconnectRequested = false;
 
+  /**
+   * Manual keep-alive ping timer. The `ws` client (unlike `ws.Server`) does
+   * not support a `pingInterval` ClientOption, so we drive pings ourselves.
+   */
+  private _pingTimer: ReturnType<typeof setInterval> | null = null;
+  private static readonly _PING_INTERVAL_MS = 20_000;
+
   /** Current instructions string — kept so `updateInstructions` can diff. */
   private _currentInstructions: string;
+
+  /** Currently registered tool definitions; sent with `session.update`. */
+  private _tools: QwenToolDefinition[] = [];
 
   /** Registered callbacks (optional convenience layer on top of EventEmitter). */
   private readonly _callbacks: QwenCallbacks;
@@ -389,8 +458,8 @@ export class QwenRealtimeClient extends EventEmitter {
     super();
 
     this._apiKey = config.apiKey;
-    this._model = config.model ?? "qwen3-omni-flash-realtime";
-    this._voice = config.voice ?? "Cherry";
+    this._model = config.model ?? "qwen3.5-omni-flash-realtime";
+    this._voice = config.voice ?? DEFAULT_VOICE;
     this._voiceModel = config.voiceModel ?? "gummy-realtime-v1";
     this._serverVad = config.serverVad ?? true;
     this._inputAudioFormat = config.inputAudioFormat ?? "pcm16";
@@ -492,26 +561,57 @@ export class QwenRealtimeClient extends EventEmitter {
    * @returns `true` if the frame was accepted and sent, `false` on error.
    */
   sendVideo(frameData: Buffer): boolean {
-    if (!this._isConnected || !this._ws) return false;
+    if (!this._isConnected || !this._ws) {
+      this._logVideoDrop("not_connected");
+      return false;
+    }
 
     // DashScope requires audio to precede video in the same turn.
     if (!this._audioAppended) {
-      // Not an error — simply waiting for the first audio chunk.
+      this._logVideoDrop("no_audio_yet");
       return true;
     }
 
     // Anti-echo gate.
-    if (this._isResponding) return true;
+    if (this._isResponding) {
+      this._logVideoDrop("is_responding");
+      return true;
+    }
 
     try {
+      // Qwen 3.5-omni-flash-realtime uses `input_image_buffer.append` for
+      // continuous video frames (confirmed via scripts/test-qwen35-video.ts).
+      // The legacy `input_audio_buffer.append_video` name was rejected with
+      // "Invalid value" so no frame reached the model previously.
       this._sendMessage({
-        type: "input_audio_buffer.append_video",
-        video: frameData.toString("base64"),
+        type: "input_image_buffer.append",
+        image: frameData.toString("base64"),
       });
+      this._videoFrameCount++;
+      // Log every 10th frame to confirm the video stream reaches Qwen without spamming.
+      if (this._videoFrameCount % 10 === 1) {
+        console.log(
+          `[Qwen] 📹 video frame sent  seq=${this._videoFrameCount}  bytes=${frameData.length}`,
+        );
+      }
       return true;
     } catch (err) {
       console.error("[Qwen] sendVideo failed:", err);
       return false;
+    }
+  }
+
+  private _videoFrameCount = 0;
+  private _videoDropReasonCounts: Record<string, number> = {};
+  private _logVideoDrop(reason: string): void {
+    const prev = this._videoDropReasonCounts[reason] ?? 0;
+    const next = prev + 1;
+    this._videoDropReasonCounts[reason] = next;
+    // Log the first drop of each reason + every 30th after that.
+    if (next === 1 || next % 30 === 0) {
+      console.warn(
+        `[Qwen] 📹 video frame dropped  reason=${reason}  count=${next}`,
+      );
     }
   }
 
@@ -579,6 +679,103 @@ export class QwenRealtimeClient extends EventEmitter {
   }
 
   // -------------------------------------------------------------------------
+  // Public function-calling API
+  // -------------------------------------------------------------------------
+
+  /**
+   * Register tool definitions for the session.
+   *
+   * Can be called before {@link connect} to seed the initial session, or at any
+   * point afterwards to hot-swap the tool catalogue.
+   *
+   * @param tools - Full list of tools. Replaces any previously-registered set.
+   */
+  setTools(tools: QwenToolDefinition[]): void {
+    this._tools = tools;
+    if (this._isConnected && this._ws) {
+      this._sendSessionUpdate({ tools });
+    }
+  }
+
+  /** Read-only view of the currently registered tools. */
+  get tools(): readonly QwenToolDefinition[] {
+    return this._tools;
+  }
+
+  /**
+   * Send a function-call result back to the model and request a new response.
+   *
+   * @param callId - The `callId` from the {@link QwenFunctionCall} received on
+   *   the `functionCall` event / `onFunctionCall` callback.
+   * @param resultJson - JSON-encoded result payload (conventionally a
+   *   `{ status, ... }` object — see proposal doc §3.5).
+   */
+  async sendFunctionResult(callId: string, resultJson: string): Promise<void> {
+    this._sendMessage({
+      type: "conversation.item.create",
+      item: {
+        type: "function_call_output",
+        call_id: callId,
+        output: resultJson,
+      },
+    });
+    // Safety: Qwen may still be speaking an ACK ("承知しました") when the
+    // tool result arrives. Defer `response.create` to `response.done` to
+    // avoid "Conversation already has an active response".
+    this._triggerResponseSafely();
+  }
+
+  /**
+   * Inject a system-role event into the conversation and trigger a response.
+   *
+   * Primary use case: owner notifications pushed from Winclaw (new mail, task
+   * completion, calendar reminders) that should be spoken out loud.
+   *
+   * Safety: if Qwen is currently generating a response, the `response.create`
+   * is deferred until `response.done` fires — sending it now would yield
+   * `Conversation already has an active response` from the API.
+   *
+   * @param text - System message content (often prefixed with a tag such as
+   *   `[OWNER NOTIFICATION]`).
+   */
+  async sendSystemEvent(text: string): Promise<void> {
+    this._sendMessage({
+      type: "conversation.item.create",
+      item: {
+        type: "message",
+        role: "system",
+        content: [{ type: "input_text", text }],
+      },
+    });
+    this._triggerResponseSafely();
+  }
+
+  /**
+   * Trigger a response without injecting any new conversation item.
+   *
+   * Safety: defers to `response.done` if Qwen is mid-speech.
+   */
+  async createResponse(): Promise<void> {
+    this._triggerResponseSafely();
+  }
+
+  /**
+   * Schedule a `response.create` — send immediately if idle, else defer
+   * until the current response completes. Prevents the Qwen API error
+   * "Conversation already has an active response".
+   */
+  private _triggerResponseSafely(): void {
+    if (this._isResponding) {
+      this._pendingResponseCreate = true;
+      console.log(
+        "[Qwen] response.create deferred (active response in flight) — will fire on response.done",
+      );
+      return;
+    }
+    this._sendMessage({ type: "response.create" });
+  }
+
+  // -------------------------------------------------------------------------
   // Public read-only state
   // -------------------------------------------------------------------------
 
@@ -630,14 +827,15 @@ export class QwenRealtimeClient extends EventEmitter {
   private _openWebSocket(): Promise<void> {
     return new Promise((resolve, reject) => {
       const wsUrl = `wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=${encodeURIComponent(this._model)}`;
+      // NOTE: the `ws` client does NOT support a `pingInterval` ClientOption
+      // (that option only exists on `ws.Server`). Keep-alive pings are driven
+      // manually via `_startPingLoop()` once the socket is open.
       const ws = new WebSocket(
         wsUrl,
         {
           headers: {
             Authorization: `Bearer ${this._apiKey}`,
           },
-          // Keep-alive pings every 20 s to prevent idle timeouts.
-          pingInterval: 20_000,
         }
       );
       console.log(`[Qwen] Connecting to ${wsUrl.replace(/Bearer .{8}/, 'Bearer ****')}`);
@@ -679,7 +877,31 @@ export class QwenRealtimeClient extends EventEmitter {
     this._reconnectAttempts = 0;
 
     this._sendSessionUpdate(this._buildFullSessionPayload(), ws);
+    this._startPingLoop();
     // Connection is considered established once session.created arrives.
+  }
+
+  /** Start manual keep-alive ping loop. No-op if already running. */
+  private _startPingLoop(): void {
+    this._stopPingLoop();
+    this._pingTimer = setInterval(() => {
+      const ws = this._ws;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.ping();
+        } catch (err) {
+          console.warn("[Qwen] ping failed:", err);
+        }
+      }
+    }, QwenRealtimeClient._PING_INTERVAL_MS);
+  }
+
+  /** Stop the manual keep-alive ping loop. Idempotent. */
+  private _stopPingLoop(): void {
+    if (this._pingTimer !== null) {
+      clearInterval(this._pingTimer);
+      this._pingTimer = null;
+    }
   }
 
   /** Handle incoming WebSocket messages. */
@@ -812,6 +1034,35 @@ export class QwenRealtimeClient extends EventEmitter {
           // Always emit responseDone so TTS queue can proceed.
           // Handler checks ttsInProgress to decide what to do.
           this.emit("responseDone");
+          // If a caller requested `response.create` while we were mid-speech,
+          // flush it now. See {@link _triggerResponseSafely}.
+          if (this._pendingResponseCreate) {
+            this._pendingResponseCreate = false;
+            console.log("[Qwen] flushing deferred response.create");
+            try {
+              this._sendMessage({ type: "response.create" });
+            } catch (err) {
+              console.warn("[Qwen] deferred response.create failed:", err);
+            }
+          }
+          break;
+        }
+
+        // -------------------------------------------------------
+        // Function calling
+        // -------------------------------------------------------
+        case "response.function_call_arguments.done": {
+          const ev = event as UnknownEvent;
+          const call: QwenFunctionCall = {
+            callId: String(ev.call_id ?? ""),
+            name: String(ev.name ?? ""),
+            argumentsJson:
+              typeof ev.arguments === "string" ? ev.arguments : "",
+          };
+          console.log(
+            `[Qwen] function_call: ${call.name} (${call.callId}) args=${call.argumentsJson.slice(0, 120)}`
+          );
+          this.emit("functionCall", call);
           break;
         }
 
@@ -848,6 +1099,7 @@ export class QwenRealtimeClient extends EventEmitter {
     this._isConnected = false;
     this._isConnecting = false;
     this._isResponding = false;
+    this._stopPingLoop();
     this._ws = null;
 
     console.warn(
@@ -910,6 +1162,7 @@ export class QwenRealtimeClient extends EventEmitter {
 
   /** Attempt to close the socket gracefully. */
   private _closeSocket(code = 1000, reason = ""): void {
+    this._stopPingLoop();
     if (this._ws) {
       try {
         this._ws.close(code, reason);
@@ -926,44 +1179,28 @@ export class QwenRealtimeClient extends EventEmitter {
 
   /**
    * Build a complete `session.update` session payload from the current config.
-   *
-   * The `tools` array includes the built-in `execute_winclaw_task` function
-   * that allows the model to delegate tasks back to the WinClaw agent framework.
    */
   private _buildFullSessionPayload(): SessionUpdatePayload {
-    const winclawTaskTool: QwenTool = {
-      type: "function",
-      function: {
-        name: "execute_winclaw_task",
-        description:
-          "Delegate a complex task to the WinClaw AI agent framework " +
-          "(GLM-5-turbo / Claude Opus) and return the result as text.",
-        parameters: {
-          type: "object",
-          properties: {
-            task_description: {
-              type: "string",
-              description: "Plain-language description of the task to execute",
-            },
-          },
-          required: ["task_description"],
-        },
-      },
-    };
-
-    return {
+    const payload: SessionUpdatePayload = {
       modalities: ["text", "audio"],
       voice: this._voice,
       input_audio_format: this._inputAudioFormat,
       output_audio_format: this._outputAudioFormat,
       input_audio_transcription: { model: this._voiceModel },
-      // Keep server VAD for STT (triggers transcription on speech end).
-      // Auto-responses from VAD are cancelled in the response.created handler
-      // when ttsOnly mode is active — see _onResponseCreated().
-      turn_detection: this._serverVad ? { type: "server_vad" } : null,
+      turn_detection: this._serverVad
+        ? { type: "server_vad", interrupt_response: true, create_response: true }
+        : null,
       instructions: this._currentInstructions || undefined,
-      tools: [winclawTaskTool],
+      // NOTE: enable_search is only supported by qwen3.5-omni-plus-realtime,
+      // NOT by qwen3.5-omni-flash-realtime (causes "Access denied" disconnect).
+      // Uncomment when upgrading to plus model:
+      // enable_search: true,
+      // search_options: { enable_source: true },
     };
+    if (this._tools.length > 0) {
+      payload.tools = this._tools;
+    }
+    return payload;
   }
 
   /**
@@ -1048,6 +1285,12 @@ export class QwenRealtimeClient extends EventEmitter {
     if (cb.onSessionEnd) {
       this.on("sessionEnd", () => {
         void this._invoke(cb.onSessionEnd!);
+      });
+    }
+
+    if (cb.onFunctionCall) {
+      this.on("functionCall", (call: QwenFunctionCall) => {
+        void this._invoke(cb.onFunctionCall!, call);
       });
     }
   }

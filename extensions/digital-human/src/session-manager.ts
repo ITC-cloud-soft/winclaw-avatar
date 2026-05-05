@@ -17,10 +17,14 @@
 
 import type WebSocket from "ws";
 
+import type { EventEmitter } from "node:events";
+
 import { RealtimeSessionHandler } from "./realtime-handler.js";
 import type { HandlerDeps } from "./realtime-handler.js";
 import type { DigitalHumanConfig } from "./config.js";
 import type { GatewayBridge } from "./gateway-bridge.js";
+import type { MemoryCorePlugin } from "./memory-bridge.js";
+import type { WebSearchResult } from "./tool-router.js";
 
 // ---------------------------------------------------------------------------
 // Internal record type
@@ -54,6 +58,12 @@ export interface SessionManagerConfig {
   workspaceDir: string;
   /** Gateway bridge for routing messages through the WinClaw agent pipeline. */
   gwBridge: GatewayBridge;
+  /** Memory-core plugin (required for FC-mode tool routing). */
+  memory?: MemoryCorePlugin;
+  /** Optional Winclaw event bus (enables NotifyBridge in FC mode). */
+  winclawBus?: EventEmitter;
+  /** Optional Winclaw web-search adapter for `internet_search`. */
+  webSearchFn?: (query: string) => Promise<WebSearchResult>;
 }
 
 // ---------------------------------------------------------------------------
@@ -97,6 +107,11 @@ export class SessionManager {
   private readonly config: DigitalHumanConfig;
   private readonly workspaceDir: string;
   private readonly gwBridge: GatewayBridge;
+  private readonly memory: MemoryCorePlugin | undefined;
+  private readonly winclawBus: EventEmitter | undefined;
+  private readonly webSearchFn:
+    | ((query: string) => Promise<WebSearchResult>)
+    | undefined;
 
   /** Handle for the periodic timeout-check interval, or `null` when stopped. */
   private timeoutCheckInterval: ReturnType<typeof setInterval> | null = null;
@@ -108,6 +123,9 @@ export class SessionManager {
     this.config = deps.config;
     this.workspaceDir = deps.workspaceDir;
     this.gwBridge = deps.gwBridge;
+    this.memory = deps.memory;
+    this.winclawBus = deps.winclawBus;
+    this.webSearchFn = deps.webSearchFn;
   }
 
   // ---------------------------------------------------------------------------
@@ -149,6 +167,9 @@ export class SessionManager {
       config: this.config,
       workspaceDir: this.workspaceDir,
       gwBridge: this.gwBridge,
+      memory: this.memory,
+      winclawBus: this.winclawBus,
+      webSearchFn: this.webSearchFn,
     };
 
     const handler = new RealtimeSessionHandler(deps);

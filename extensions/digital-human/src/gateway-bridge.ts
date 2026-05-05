@@ -40,6 +40,13 @@ interface PendingRequest {
   timer: ReturnType<typeof setTimeout>;
 }
 
+interface PendingRun {
+  resolve: (value: string) => void;
+  reject: (err: Error) => void;
+  buffer: string;
+  timer: ReturnType<typeof setTimeout>;
+}
+
 // ---------------------------------------------------------------------------
 // GatewayBridge
 // ---------------------------------------------------------------------------
@@ -51,6 +58,7 @@ export class GatewayBridge {
   private connected = false;
   private pendingRequests = new Map<string, PendingRequest>();
   private chatEventHandlers = new Map<string, ChatEventHandler>(); // sessionKey → handler
+  private pendingRuns = new Map<string, PendingRun>(); // runId → awaiter
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 10;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -159,6 +167,10 @@ export class GatewayBridge {
               }
             }
           }
+          // Also route to per-runId awaiters (chatSendAndWait).
+          if (payload?.runId) {
+            this.dispatchToPendingRun(payload);
+          }
           return;
         }
       });
@@ -206,6 +218,11 @@ export class GatewayBridge {
       pending.reject(new Error("GatewayBridge disconnected"));
     }
     this.pendingRequests.clear();
+    for (const [, pending] of this.pendingRuns) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error("GatewayBridge disconnected"));
+    }
+    this.pendingRuns.clear();
   }
 
   /**
@@ -214,13 +231,194 @@ export class GatewayBridge {
    */
   async chatSend(sessionKey: string, message: string): Promise<string> {
     const idempotencyKey = randomUUID();
-    await this.request("chat.send", {
+    console.info(
+      `[GW:${sessionKey}] ↗️ chat.send runId=<pending>  msg="${message.slice(0, 150)}"`
+    );
+    const res = await this.request("chat.send", {
       sessionKey,
       message,
       idempotencyKey,
       deliver: false,
     });
-    return idempotencyKey;
+    // Gateway returns { runId, status } — use the real runId for event matching
+    const runId = (res as any)?.runId || idempotencyKey;
+    console.info(`[GW:${sessionKey}] ↗️ chat.send runId=${runId}  ack`);
+    return runId;
+  }
+
+  /**
+   * Send a chat message and wait for its final (or error) response.
+   * Accumulates deltas and resolves with the full final text.
+   *
+   * Coexists with {@link onChatEvent} — both fire for the same events when
+   * both are registered. Useful for DH function-calling where a tool call
+   * needs to route through the same Gateway agent pipeline that WhatsApp /
+   * text-chat use, and then return the agent's reply to Qwen as a tool result.
+   *
+   * @throws on `error` / `aborted` states, or when the timeout elapses.
+   */
+  async chatSendAndWait(
+    sessionKey: string,
+    message: string,
+    opts?: { timeoutMs?: number },
+  ): Promise<string> {
+    const timeoutMs = opts?.timeoutMs ?? 180_000;
+    const runId = await this.chatSend(sessionKey, message);
+    return new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pendingRuns.delete(runId);
+        console.warn(
+          `[GW:${sessionKey}] ⚠️ chat.timeout runId=${runId}  waited ${timeoutMs}ms`
+        );
+        reject(new Error("chatSendAndWait: timeout"));
+      }, timeoutMs);
+      this.pendingRuns.set(runId, {
+        resolve: (value) => {
+          clearTimeout(timer);
+          this.pendingRuns.delete(runId);
+          console.info(
+            `[GW:${sessionKey}] ↘️ chat.final runId=${runId}  text="${(value ?? "").slice(0, 150)}"`
+          );
+          resolve(value);
+        },
+        reject: (err) => {
+          clearTimeout(timer);
+          this.pendingRuns.delete(runId);
+          console.warn(
+            `[GW:${sessionKey}] ⚠️ chat.error runId=${runId}  ${err instanceof Error ? err.message : String(err)}`
+          );
+          reject(err);
+        },
+        buffer: "",
+        timer,
+      });
+    });
+  }
+
+  /**
+   * Send a chat message and wait — but only for a short early deadline.
+   *
+   * Resolves to one of two shapes:
+   *
+   *   { done: true,  text }                          — agent replied fast
+   *   { done: false, runId, continuation }           — early deadline fired;
+   *       `continuation` is a promise that resolves with the eventual final
+   *       text when the agent truly finishes (up to `lateTimeoutMs` later).
+   *       It rejects on the late deadline or on agent error/abort.
+   *
+   * This is the building block for the Phase C "async receipt" pattern —
+   * caller returns the receipt to Qwen immediately, and pipes the late
+   * `continuation` into `notify.dh` for spoken announcement.
+   *
+   * Flow trace:
+   *   chat.send RPC → runId
+   *     ├─ within earlyTimeoutMs → final → { done:true, text }
+   *     └─ earlyTimeoutMs elapses → { done:false, runId, continuation }
+   *                                   continuation keeps same pendingRun entry
+   *                                   with extended lateTimeoutMs deadline.
+   */
+  async chatSendAsync(
+    sessionKey: string,
+    message: string,
+    opts?: { earlyTimeoutMs?: number; lateTimeoutMs?: number },
+  ): Promise<
+    | { done: true; text: string }
+    | { done: false; runId: string; continuation: Promise<string> }
+  > {
+    const earlyTimeoutMs = opts?.earlyTimeoutMs ?? 15_000;
+    const lateTimeoutMs = opts?.lateTimeoutMs ?? 600_000;
+    const runId = await this.chatSend(sessionKey, message);
+
+    // Tri-state outcome resolved by whichever of these fires first:
+    //   1. final/error arrives before earlyTimeoutMs → "fast" path
+    //   2. earlyTimeoutMs elapses                    → "late" path; we
+    //      switch the pendingRun onto a fresh `latePromise` and a new
+    //      lateTimeoutMs timer; the caller awaits `continuation`.
+    let earlySettle!: (
+      outcome: { kind: "fast-final"; text: string }
+        | { kind: "fast-error"; err: Error }
+        | { kind: "late-start" },
+    ) => void;
+    const earlyOutcome = new Promise<
+      | { kind: "fast-final"; text: string }
+      | { kind: "fast-error"; err: Error }
+      | { kind: "late-start" }
+    >((r) => { earlySettle = r; });
+
+    let lateResolve!: (v: string) => void;
+    let lateReject!: (err: Error) => void;
+    const continuation = new Promise<string>((res, rej) => {
+      lateResolve = res;
+      lateReject = rej;
+    });
+
+    let earlyFired = false;
+    let settled = false;
+    let lateTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const earlyTimer = setTimeout(() => {
+      if (settled) return;
+      earlyFired = true;
+      earlySettle({ kind: "late-start" });
+      // Re-arm the pendingRun with a long deadline. The entry stays in
+      // the map so dispatchToPendingRun can still route final/error here.
+      const pending = this.pendingRuns.get(runId);
+      if (pending) {
+        clearTimeout(pending.timer);
+        lateTimer = setTimeout(() => {
+          this.pendingRuns.delete(runId);
+          console.warn(
+            `[GW:${sessionKey}] ⚠️ chat.late-timeout runId=${runId}  waited ${lateTimeoutMs}ms`,
+          );
+          lateReject(new Error("chatSendAsync: late timeout"));
+        }, lateTimeoutMs);
+        pending.timer = lateTimer;
+      } else {
+        lateReject(new Error("chatSendAsync: pendingRun vanished"));
+      }
+    }, earlyTimeoutMs);
+
+    this.pendingRuns.set(runId, {
+      resolve: (value) => {
+        settled = true;
+        clearTimeout(earlyTimer);
+        if (lateTimer) clearTimeout(lateTimer);
+        this.pendingRuns.delete(runId);
+        if (earlyFired) {
+          console.info(
+            `[GW:${sessionKey}] ↘️ chat.late-final runId=${runId}  text="${(value ?? "").slice(0, 150)}"`,
+          );
+          lateResolve(value);
+        } else {
+          console.info(
+            `[GW:${sessionKey}] ↘️ chat.final runId=${runId}  text="${(value ?? "").slice(0, 150)}"`,
+          );
+          earlySettle({ kind: "fast-final", text: value });
+        }
+      },
+      reject: (err) => {
+        settled = true;
+        clearTimeout(earlyTimer);
+        if (lateTimer) clearTimeout(lateTimer);
+        this.pendingRuns.delete(runId);
+        if (earlyFired) {
+          lateReject(err);
+        } else {
+          earlySettle({ kind: "fast-error", err });
+        }
+      },
+      buffer: "",
+      timer: earlyTimer,
+    });
+
+    const outcome = await earlyOutcome;
+    if (outcome.kind === "fast-final") {
+      return { done: true, text: outcome.text };
+    }
+    if (outcome.kind === "fast-error") {
+      throw outcome.err;
+    }
+    return { done: false, runId, continuation };
   }
 
   /**
@@ -235,6 +433,16 @@ export class GatewayBridge {
    */
   offChatEvent(sessionKey: string): void {
     this.chatEventHandlers.delete(sessionKey);
+  }
+
+  /**
+   * Check whether a given runId is currently being awaited by
+   * {@link chatSendAndWait}. Used by listeners (e.g. NotifyBridge) to skip
+   * events that originate from an in-flight tool-call round-trip so they
+   * are not double-handled (once as tool result, once as system notification).
+   */
+  isPendingRun(runId: string): boolean {
+    return this.pendingRuns.has(runId);
   }
 
   get isConnected(): boolean {
@@ -258,6 +466,31 @@ export class GatewayBridge {
       this.pendingRequests.set(id, { resolve, reject, timer });
       this.sendFrame({ type: "req", id, method, params });
     });
+  }
+
+  private dispatchToPendingRun(payload: ChatEventPayload): void {
+    const pending = this.pendingRuns.get(payload.runId);
+    if (!pending) return;
+
+    const text = payload.message?.content?.[0]?.text ?? "";
+
+    switch (payload.state) {
+      case "delta":
+        if (text) pending.buffer += text;
+        return;
+      case "final": {
+        // Prefer the final message text if present; fall back to accumulated deltas.
+        const finalText = text || pending.buffer;
+        pending.resolve(finalText);
+        return;
+      }
+      case "error":
+        pending.reject(new Error(payload.errorMessage ?? "chat run error"));
+        return;
+      case "aborted":
+        pending.reject(new Error("chat run aborted"));
+        return;
+    }
   }
 
   private sendFrame(frame: unknown): void {

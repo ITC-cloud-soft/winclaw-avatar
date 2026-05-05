@@ -186,19 +186,32 @@ export class GrcConnectionManager {
         }
 
         // Handle API Key from hello response
+        // Covers: api_key_status "new" (first hello), "rotated" (client/DB
+        // mismatch auto-healed), and "reissued_orphan" (DB row was missing).
         if (helloResult?.api_key) {
           this.client.setApiKey(helloResult.api_key);
           this.tier = "apikey";
-          // Persist API Key to config
+          // Persist API Key to config, and normalize mode → "apikey" so
+          // grc-connection tier detection and SSE stream auth stay consistent.
           const cfgNow = loadConfig();
           await writeConfigFile({
             ...cfgNow,
-            grc: { ...cfgNow.grc, auth: { ...cfgNow.grc?.auth, apiKey: helloResult.api_key } },
+            grc: {
+              ...cfgNow.grc,
+              auth: {
+                ...cfgNow.grc?.auth,
+                mode: "apikey" as const,
+                apiKey: helloResult.api_key,
+              },
+            },
           });
           // Stop token refresh — API Key doesn't expire
           if (this.tokenCheckTimer) { clearInterval(this.tokenCheckTimer); this.tokenCheckTimer = null; }
           if (this.tokenRefreshTimer) { clearTimeout(this.tokenRefreshTimer); this.tokenRefreshTimer = null; }
-          log.info({ api_key_id: helloResult.api_key_id }, "API Key received from GRC hello and persisted");
+          log.info(
+            { api_key_id: helloResult.api_key_id, status: helloResult.api_key_status },
+            "API Key received from GRC hello and persisted",
+          );
         } else if (helloResult?.api_key_status === "active") {
           this.tier = "apikey";
           log.info({ api_key_id: helloResult.api_key_id }, "API Key confirmed active by GRC");

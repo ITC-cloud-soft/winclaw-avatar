@@ -27,10 +27,10 @@ export const QwenConfigSchema = z
   .object({
     /** DashScope API key. Use `${DASHSCOPE_API_KEY}` in winclaw.json. */
     apiKey: z.string().min(1, "qwen.apiKey is required"),
-    /** Realtime model identifier. @default "qwen3-omni-flash-realtime" */
-    model: z.string().min(1).default("qwen3-omni-flash-realtime"),
-    /** Voice preset for TTS synthesis. @default "Cherry" */
-    voice: z.enum(["Cherry", "Serena", "Ethan", "Chelsie"]).default("Cherry"),
+    /** Realtime model identifier. @default "qwen3.5-omni-flash-realtime" */
+    model: z.string().min(1).default("qwen3.5-omni-flash-realtime"),
+    /** Voice preset for Qwen3.5 Realtime TTS. @default "Serena" */
+    voice: z.string().min(1).default("Serena"),
     /** Voice-to-text model used for transcription. @default "gummy-realtime-v1" */
     voiceModel: z.string().min(1).default("gummy-realtime-v1"),
     /** Whether to use server-side voice activity detection. @default true */
@@ -185,6 +185,37 @@ export const TaskBridgeConfigSchema = z
 export type TaskBridgeConfig = z.infer<typeof TaskBridgeConfigSchema>;
 
 // ---------------------------------------------------------------------------
+// DH tool dispatch (async receipt pattern — Phase C)
+// ---------------------------------------------------------------------------
+
+/**
+ * Timeouts controlling the async-receipt pattern used by {@link ToolRouter}.
+ *
+ * When an agent tool (ask_winclaw / task_run / channel_send) takes longer than
+ * `earlyTimeoutMs` to reply, the router returns a fast receipt to Qwen
+ * ("承知しました、確認中です…") and keeps listening for the agent reply up to
+ * `lateTimeoutMs`. When it finally arrives, the result is pushed back through
+ * the `notify.dh` RPC so NotifyBridge speaks it as an owner notification.
+ */
+export const DhToolConfigSchema = z
+  .object({
+    /**
+     * Early ceiling before the router returns a "承知しました、確認中です" receipt.
+     * Range: 1s–120s. @default 15000
+     */
+    earlyTimeoutMs: z.number().int().min(1_000).max(120_000).default(15_000),
+    /**
+     * Late ceiling — how long after the early deadline we keep waiting for the
+     * actual agent reply before giving up. Range: 30s–1800s. @default 600000
+     */
+    lateTimeoutMs: z.number().int().min(30_000).max(1_800_000).default(600_000),
+  })
+  .strict()
+  .default({});
+
+export type DhToolConfig = z.infer<typeof DhToolConfigSchema>;
+
+// ---------------------------------------------------------------------------
 // Session lifecycle
 // ---------------------------------------------------------------------------
 
@@ -229,6 +260,31 @@ export type SessionConfig = z.infer<typeof SessionConfigSchema>;
  * );
  * ```
  */
+/**
+ * Runtime mode for the digital-human voice pipeline.
+ *
+ * - `"function_calling"` (default): Qwen 3.5 Realtime handles speech, reasoning
+ *   and TTS in a single WS, calling winclaw tools via function calls.
+ * - `"legacy_pipeline"`: the original STT → Gateway chat → TTS three-stage
+ *   pipeline. Kept as a safety fallback during rollout.
+ *
+ * Overridable per-process via the `DH_MODE` environment variable.
+ */
+export const DhModeSchema = z
+  .enum(["function_calling", "legacy_pipeline"])
+  .default("function_calling");
+
+export type DhMode = z.infer<typeof DhModeSchema>;
+
+/** Resolve the DH mode from an env override, falling back to the config value. */
+export function resolveDhMode(configured: DhMode | undefined): DhMode {
+  const envVal = process.env.DH_MODE;
+  if (envVal === "function_calling" || envVal === "legacy_pipeline") {
+    return envVal;
+  }
+  return configured ?? "function_calling";
+}
+
 export const digitalHumanConfigSchema = z
   .object({
     qwen: QwenConfigSchema,
@@ -237,6 +293,10 @@ export const digitalHumanConfigSchema = z
     memory: MemoryConfigSchema,
     taskBridge: TaskBridgeConfigSchema,
     session: SessionConfigSchema,
+    /** See {@link DhToolConfigSchema}. */
+    dhTool: DhToolConfigSchema,
+    /** See {@link DhModeSchema}. */
+    dhMode: DhModeSchema.optional(),
   })
   .strict();
 

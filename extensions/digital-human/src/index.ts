@@ -22,10 +22,13 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { ZodError } from "zod";
 import { WebSocketServer, WebSocket, type RawData as WsRawData } from "ws";
 
+import { EventEmitter } from "node:events";
+
 import { digitalHumanConfigSchema, type DigitalHumanConfig } from "./config.js";
 import { SessionManager } from "./session-manager.js";
 import type { SessionManagerConfig } from "./session-manager.js";
 import { GatewayBridge } from "./gateway-bridge.js";
+import type { WebSearchResult } from "./tool-router.js";
 import { parseInboundMessage } from "./ws-routes.js";
 
 // ---------------------------------------------------------------------------
@@ -147,10 +150,39 @@ async function startDhWsServer(
     // Continue anyway — DH can still work for basic voice without agent
   }
 
+  // ── No direct task/channel adapters ──────────────────────────────────────
+  // `task_run` and `channel_send` are routed through the Gateway agent
+  // pipeline (same path as WhatsApp / text-chat). The tool-router builds a
+  // natural-language request, sends it via `chat.send`, and waits for the
+  // agent's reply. No direct `cron.run` / `send` RPC wiring needed.
+  //
+  // Winclaw does not currently expose a programmatic internet-search adapter
+  // to plugins (the agent `web-search` tool is tied to the CLI). Leave the
+  // hook undefined so `internet_search` falls back to the "under construction"
+  // stub. To enable: plug a concrete `(query) => Promise<WebSearchResult>`
+  // implementation here — e.g. one that calls a configured search channel.
+  //
+  // TODO(plugin-host): resolve Winclaw-native web search and inject.
+  const webSearchFn: ((q: string) => Promise<WebSearchResult>) | undefined =
+    undefined;
+
+  // NotifyBridge is now primarily driven by gateway chat events emitted by
+  // Winclaw components (see realtime-handler FC wiring: gwBridge.onChatEvent
+  // → NotifyBridge.pushFromChatEvent). We keep a local EventEmitter bus for
+  // test harnesses and legacy callers that still emit `email.received` /
+  // `task.completed` etc. directly.
+  //
+  // TODO(plugin-host): once Winclaw components are reliably pushing
+  // notifications as chat events via the gateway, the winclawBus parameter
+  // can be removed from SessionManagerConfig entirely.
+  const winclawBus: EventEmitter = new EventEmitter();
+
   const managerConfig: SessionManagerConfig = {
     config,
     workspaceDir,
     gwBridge: dhGwBridge,
+    winclawBus,
+    webSearchFn,
   };
   dhSessionManager = new SessionManager(managerConfig);
   dhSessionManager.startTimeoutChecker();

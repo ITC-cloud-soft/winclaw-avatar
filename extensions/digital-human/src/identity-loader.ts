@@ -60,6 +60,18 @@ export interface DigitalHumanIdentity {
   name: string;
 
   /**
+   * How the avatar refers to the owner (e.g. "Taro-kun", "ご主人様").
+   * Extracted from IDENTITY.md. `undefined` when not found.
+   */
+  nickname?: string;
+
+  /**
+   * Relationship descriptor (恋人 / 親友 / 兄妹 / メンター etc.) parsed
+   * from IDENTITY.md. `undefined` when not found.
+   */
+  relationship?: string;
+
+  /**
    * Vibe / style description extracted from IDENTITY.md
    * (empty string when not found).
    */
@@ -175,18 +187,103 @@ export class IdentityLoader {
 
     const name = this.extractField(identity, "name") ?? "WinClaw";
     const vibe = this.extractField(identity, "vibe") ?? "";
+    const nickname = this.extractNickname(identity) ?? undefined;
+    const relationship = this.extractRelationship(identity) ?? undefined;
 
     const instructions = this.assembleInstructions(soul, identity, user, agents);
 
     return {
       instructions,
       name,
+      nickname,
+      relationship,
       vibe,
       rawSoul: soul,
       rawIdentity: identity,
       rawUser: user,
       rawAgents: agents,
     };
+  }
+
+  /**
+   * Extract the "nickname" — how the avatar should address the owner.
+   *
+   * Accepts several common Markdown / YAML shapes found in IDENTITY.md:
+   *  - `nickname: Taro-kun`
+   *  - `**Nickname**: Taro-kun`
+   *  - `## 呼び方 / Nickname\nあなたのこと: "Taro-kun"`
+   *  - A `## 呼び方` / `## 愛称` / `## ニックネーム` section whose next
+   *    non-empty line is treated as the value.
+   *  - `主人の呼び方: ...` / `owner nickname: ...`
+   *
+   * Returns `null` when no variant matches.
+   */
+  extractNickname(content: string): string | null {
+    // Canonical key/value styles first.
+    const direct =
+      this.extractField(content, "nickname") ??
+      this.extractField(content, "愛称") ??
+      this.extractField(content, "ニックネーム") ??
+      this.extractField(content, "呼び方") ??
+      this.extractField(content, "主人の呼び方") ??
+      this.extractField(content, "owner nickname") ??
+      this.extractField(content, "あなたのこと");
+    if (direct) return stripQuotes(direct);
+
+    // Heading style — find a heading with one of the magic words, then read
+    // the first non-empty, non-heading line that follows. Supports patterns
+    // like `あなたのこと: "Taro-kun"`.
+    const headingPattern =
+      /^#{1,6}\s+(?:[^\n]*?(?:呼び方|愛称|ニックネーム|nickname)[^\n]*)$/im;
+    const match = content.match(headingPattern);
+    if (match && match.index !== undefined) {
+      const rest = content.slice(match.index + match[0].length);
+      const lines = rest.split(/\r?\n/);
+      for (const line of lines) {
+        const t = line.trim();
+        if (!t) continue;
+        if (t.startsWith("#")) break; // next section
+        // `あなたのこと: "xxx"` or bare line.
+        const kv = t.match(/^(?:[^:]+)[:：]\s*(.+)$/);
+        if (kv) return stripQuotes(kv[1].trim());
+        return stripQuotes(t);
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Extract the relationship descriptor (恋人 / 親友 / メンター / 兄妹 etc.).
+   *
+   * Supported shapes:
+   *  - `relationship: 恋人`
+   *  - `**Relationship**: 親友`
+   *  - `## 関係性 / Relationship\n恋人`
+   *  - `関係性: メンター`
+   */
+  extractRelationship(content: string): string | null {
+    const direct =
+      this.extractField(content, "relationship") ??
+      this.extractField(content, "関係性") ??
+      this.extractField(content, "関係");
+    if (direct) return stripQuotes(direct);
+
+    const headingPattern =
+      /^#{1,6}\s+(?:[^\n]*?(?:関係性|関係|relationship)[^\n]*)$/im;
+    const match = content.match(headingPattern);
+    if (match && match.index !== undefined) {
+      const rest = content.slice(match.index + match[0].length);
+      const lines = rest.split(/\r?\n/);
+      for (const line of lines) {
+        const t = line.trim();
+        if (!t) continue;
+        if (t.startsWith("#")) break;
+        const kv = t.match(/^(?:[^:]+)[:：]\s*(.+)$/);
+        if (kv) return stripQuotes(kv[1].trim());
+        return stripQuotes(t);
+      }
+    }
+    return null;
   }
 
   /**
@@ -346,6 +443,45 @@ export class IdentityLoader {
       "Do NOT add unrelated content when reading [TTS] text.",
     );
 
+    // ── Channel awareness & <voice> tag rules ────────────────────────────
+    parts.push(
+      "\n## Channel Awareness",
+      "- Messages prefixed with [voice] come from the Digital Human voice channel.",
+      "- Messages without prefix come from text chat (Webchat/WhatsApp/Telegram).",
+      "- You can reference conversations from any channel naturally.",
+      "",
+      "## Voice Response Format (CRITICAL)",
+      "When responding to [voice] messages, you MUST include a <voice> tag at the END of your response.",
+      "This tag contains a concise, spoken-language summary for the Digital Human to read aloud.",
+      "The full response is displayed as text in the chat panel. ONLY the <voice> content is spoken.",
+      "",
+      "Rules for <voice> content:",
+      "- Write as natural spoken language — no Markdown, no lists, no tables, no code",
+      "- Keep it concise but complete — cover all key points the user needs to hear",
+      "- No hard character limit — if the report has multiple items, include them all",
+      "- Use conversational tone appropriate for voice",
+      "",
+      "## Multilingual Response",
+      "- Respond in the SAME language the user used in their [voice] message.",
+      "- If [voice] message is in Japanese, write <voice> content in Japanese.",
+      "- If [voice] message is in English, write <voice> content in English.",
+      "- If [voice] message is in Chinese, write <voice> content in Chinese.",
+      "- The TTS engine supports all these languages natively.",
+      "- The full response body can use any language appropriate for the content.",
+      "",
+      "Example:",
+      "  User: [voice] プロジェクトの進捗を教えて",
+      "  Response:",
+      "    ## プロジェクト進捗",
+      "    | Project | Status |",
+      "    |---------|--------|",
+      "    | P1 | 完了 |",
+      "    | P2 | 開発中 40% |",
+      "    <voice>P1は完了しました。P2は4割ほど進んでいて、順調です。</voice>",
+      "",
+      "If the response is already very short (1 sentence), the <voice> tag can simply contain a spoken version of the same content.",
+    );
+
     // ── Extra voice instructions from config (identity.voiceInstructions) ──
     if (this.voiceInstructions) {
       parts.push("\n## 附加语音指令", this.voiceInstructions);
@@ -398,4 +534,30 @@ export class IdentityLoader {
  */
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Strip surrounding ASCII/Japanese quotation marks and trailing punctuation
+ * that commonly wrap parsed nickname/relationship values in user-authored
+ * Markdown (e.g. `"Taro-kun"`, `「ご主人様」`).
+ */
+function stripQuotes(value: string): string {
+  let s = value.trim();
+  // Strip trailing commas etc.
+  s = s.replace(/[、,。.]+$/u, "").trim();
+  const pairs: Array<[string, string]> = [
+    ['"', '"'],
+    ["'", "'"],
+    ["「", "」"],
+    ["『", "』"],
+    ["“", "”"],
+    ["‘", "’"],
+  ];
+  for (const [o, c] of pairs) {
+    if (s.startsWith(o) && s.endsWith(c)) {
+      s = s.slice(o.length, s.length - c.length).trim();
+      break;
+    }
+  }
+  return s;
 }

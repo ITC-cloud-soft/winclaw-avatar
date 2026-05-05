@@ -11,6 +11,7 @@ import { resolveDefaultAgentWorkspaceDir } from "../agents/workspace.js";
 import { requestHeartbeatNow } from "./heartbeat-wake.js";
 import { cacheTaskEvent } from "./task-event-cache.js";
 import { upsertAuthProfile, loadAuthProfileStore, saveAuthProfileStore } from "../agents/auth-profiles.js";
+import { loadConfig, writeConfigFile } from "../config/config.js";
 
 const log: SubsystemLogger = createSubsystemLogger("infra/grc-sync");
 
@@ -1024,6 +1025,8 @@ export class GrcSyncService implements GrcSyncServiceHandle {
         const parsed = JSON.parse(data) as {
           revision: number;
           reason: string;
+          api_key?: string;
+          api_key_id?: string;
           config?: {
             key_config?: { primary: GrcKeyConfigEntry | null; auxiliary: GrcKeyConfigEntry | null } | null;
           };
@@ -1034,6 +1037,42 @@ export class GrcSyncService implements GrcSyncServiceHandle {
           reason: parsed.reason,
           hasInlineConfig: !!parsed.config,
         });
+
+        // ── Handle API Key authorized event ──
+        // GRC admin pressed "授権" — raw API key is delivered via SSE
+        if (parsed.reason === "api_key_authorized" && parsed.api_key) {
+          sseLog.info("API Key received via SSE (admin authorized)", { api_key_id: parsed.api_key_id });
+          const cfg = loadConfig();
+          writeConfigFile({
+            ...cfg,
+            grc: { ...cfg.grc, auth: { ...cfg.grc?.auth, mode: "apikey" as const, apiKey: parsed.api_key } },
+          }).then(() => {
+            sseLog.info("API Key persisted to winclaw.json");
+            // Set on the HTTP client so subsequent requests use it
+            this.client.setApiKey(parsed.api_key!);
+          }).catch(err => {
+            sseLog.warn(`Failed to persist API key: ${(err as Error).message}`);
+          });
+          return;
+        }
+
+        // ── Handle API Key revoked event ──
+        if (parsed.reason === "api_key_revoked") {
+          sseLog.info("API Key revoked via SSE (admin revoked)");
+          const cfg = loadConfig();
+          const authWithoutKey = { ...cfg.grc?.auth };
+          delete (authWithoutKey as Record<string, unknown>).apiKey;
+          (authWithoutKey as Record<string, unknown>).mode = "oauth";
+          writeConfigFile({
+            ...cfg,
+            grc: { ...cfg.grc, auth: authWithoutKey as typeof cfg.grc.auth },
+          }).then(() => {
+            sseLog.info("API Key removed from winclaw.json");
+          }).catch(err => {
+            sseLog.warn(`Failed to remove API key: ${(err as Error).message}`);
+          });
+          return;
+        }
 
         // Skip if we already have this revision or newer
         if (parsed.revision <= this.sseCurrentRevision) {

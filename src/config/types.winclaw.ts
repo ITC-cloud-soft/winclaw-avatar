@@ -144,6 +144,12 @@ export type WinClawConfig = {
        * Prefer GRC_AUTH_REFRESH_TOKEN environment variable or the secrets subsystem.
        */
       refreshToken?: string;
+      /**
+       * API Key for GRC authentication (mode: "apikey").
+       * Set automatically when GRC issues an API key via /a2a/hello.
+       * @security Stored in plaintext. Prefer GRC_AUTH_API_KEY env var.
+       */
+      apiKey?: string;
     };
     /** Sync settings for GRC. */
     sync?: {
