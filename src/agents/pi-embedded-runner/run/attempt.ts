@@ -28,6 +28,10 @@ import { normalizeMessageChannel } from "../../../utils/message-channel.js";
 import { isReasoningTagProvider } from "../../../utils/provider-utils.js";
 import { resolveWinClawAgentDir } from "../../agent-paths.js";
 import { resolveSessionAgentIds } from "../../agent-scope.js";
+import {
+  createMetaCoderEmbeddedSession,
+  shouldUseMetaCoderEngine,
+} from "./metacoder-routing.js";
 import { createAnthropicPayloadLogger } from "../../anthropic-payload-log.js";
 import {
   analyzeBootstrapBudget,
@@ -1065,23 +1069,54 @@ export async function runEmbeddedAttempt(
 
       const allCustomTools = [...customTools, ...clientToolDefs];
 
-      ({ session } = await createAgentSession({
-        cwd: resolvedWorkspace,
-        agentDir,
-        authStorage: params.authStorage,
-        modelRegistry: params.modelRegistry,
-        model: params.model,
-        thinkingLevel: mapThinkingLevel(params.thinkLevel),
-        tools: builtInTools,
-        customTools: allCustomTools,
-        sessionManager,
-        settingsManager,
-        resourceLoader,
-      }));
-      applySystemPromptOverrideToSession(session, systemPromptText);
+      // P6: gated routing — coding turns may run on the ported MetaCoder engine
+      // instead of pi-coding-agent. Off by default; only when config.codingEngine
+      // === "metacoder" + anthropic-messages api. The engine owns its own LLM call
+      // (the streamFn wrapping below becomes inert no-ops it ignores), so it brings
+      // its own built-in coding tools; we bridge only WinClaw's custom tools.
+      let routedToMetaCoder = false;
+      if (shouldUseMetaCoderEngine(params)) {
+        try {
+          log.info(
+            `[metacoder] routing coding turn through ported engine: runId=${params.runId} model=${params.modelId}`,
+          );
+          ({ session } = (await createMetaCoderEmbeddedSession({
+            params,
+            cwd: resolvedWorkspace,
+            systemPromptText,
+            winclawTools: allCustomTools as never,
+            sessionManager,
+          })) as unknown as { session: NonNullable<typeof session> });
+          routedToMetaCoder = true;
+        } catch (metacoderErr) {
+          // Engine bundle missing / failed to load → degrade gracefully to the
+          // built-in pi-coding-agent rather than failing the whole turn.
+          log.warn(
+            `[metacoder] engine unavailable, falling back to pi-coding-agent: ${
+              metacoderErr instanceof Error ? metacoderErr.message : String(metacoderErr)
+            }`,
+          );
+        }
+      }
+      if (!routedToMetaCoder) {
+        ({ session } = await createAgentSession({
+          cwd: resolvedWorkspace,
+          agentDir,
+          authStorage: params.authStorage,
+          modelRegistry: params.modelRegistry,
+          model: params.model,
+          thinkingLevel: mapThinkingLevel(params.thinkLevel),
+          tools: builtInTools,
+          customTools: allCustomTools,
+          sessionManager,
+          settingsManager,
+          resourceLoader,
+        }));
+      }
       if (!session) {
         throw new Error("Embedded agent session missing");
       }
+      applySystemPromptOverrideToSession(session, systemPromptText);
       const activeSession = session;
       removeToolResultContextGuard = installToolResultContextGuard({
         agent: activeSession.agent,

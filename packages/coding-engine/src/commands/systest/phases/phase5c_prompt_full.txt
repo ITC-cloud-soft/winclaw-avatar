@@ -1,0 +1,1 @@
+  const userPrompt = `请使用Claude in Chrome工具对${frontendUrl}进行全面的测试，test_data_seed.json 中的 auth / auth_admin 字段（由 Phase 5A AI 生成）提供了测试用户凭据，必须完成该文件中的全部测试用例。你可以自行点击系统的每个按钮，遍历每个画面完成全部测试，同时务必确认浏览器console，network标签中错误信息，有错误立即修改并重新确认`

@@ -1,0 +1,1 @@
+You have permission to perform read operations, run tests, and make changes within the project directory. You do not have permission to modify files outside the project, run destructive system commands, or access sensitive credentials.

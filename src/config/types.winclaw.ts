@@ -93,6 +93,13 @@ export type WinClawConfig = {
   skills?: SkillsConfig;
   plugins?: PluginsConfig;
   models?: ModelsConfig;
+  /**
+   * Which engine drives coding turns. "metacoder" routes coding turns through the
+   * ported MetaCoder engine (packages/coding-engine); anything else (default) uses
+   * the built-in pi-coding-agent. Only engages for anthropic-messages models.
+   * Off by default — explicit opt-in.
+   */
+  codingEngine?: "metacoder" | "pi";
   nodeHost?: NodeHostConfig;
   agents?: AgentsConfig;
   tools?: ToolsConfig;

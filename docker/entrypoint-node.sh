@@ -96,6 +96,7 @@ CONFIG_JSON=$(jq -n \
   --arg gw_token "${GW_TOKEN}" \
   --arg ws_path "${WS_HOST_PATH}" \
   '{
+    codingEngine: "metacoder",
     gateway: {
       mode: "local",
       bind: $gw_bind,

@@ -1,0 +1,7 @@
+// Stub: contextCollapse/operations — projectView for context collapse
+
+import type { Message } from '../../types/message.js'
+
+export function projectView(messages: Message[]): Message[] {
+  return messages
+}
