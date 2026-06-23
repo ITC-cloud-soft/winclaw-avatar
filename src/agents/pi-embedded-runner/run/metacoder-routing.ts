@@ -52,9 +52,44 @@ type EngineModule = {
   }) => { session: RoutedAgentSession };
 };
 
-/** True when this coding turn should be routed through the ported MetaCoder engine. */
+// Coding-intent signals. The ported MetaCoder engine is a full planning agent and
+// is heavier than pi-coding-agent, so we only route GENUINE coding tasks through it
+// — ordinary chat (status checks, questions, conversation) stays on the fast pi path.
+// Multilingual (EN / 中文 / 日本語) to match the typical user base.
+const CODING_INTENT_PATTERNS: RegExp[] = [
+  // EN: coding verb + a code-ish object
+  /\b(write|create|build|implement|generate|make|fix|debug|refactor|optimi[sz]e|compile|run|add|update|port|migrate)\b[^.!?\n]{0,48}\b(code|program(me)?|script|function|class|method|module|app|application|web ?site|web ?page|component|api|endpoint|server|cli|bot|game|simulation|algorithm|unit ?test|regex|query|schema|parser|library|package|feature|bug|error|crash|file|html|css|component)\b/i,
+  // EN: standalone coding nouns / tooling
+  /\b(refactor|debug(ging)?|compile|deploy|algorithm|recursion|regex|stack ?trace|null ?pointer|segfault|git\b|repository|repo\b|npm\b|pnpm\b|pip\b|docker(file)?|kubernetes|webpack|vite\b|eslint|typescript|javascript|python|golang|rust|react|vue|node\.?js|sql)\b/i,
+  // EN: source-file extensions
+  /\.(py|js|ts|tsx|jsx|mjs|cjs|go|rs|java|cpp|cc|hpp|rb|php|html|css|scss|sql|sh|ps1|json|ya?ml|toml)\b/i,
+  // code fences / obvious code tokens
+  /```|=>|\bdef \b|\bfunction\b|\bclass \b|\bimport \b|\bconst \b|\bpublic static\b|\bSELECT .* FROM\b/i,
+  // 中文：编程动词 + 对象
+  /(编写|编程|写(一个|个|段|份)?(程序|代码|脚本|函数|网页|页面|应用|组件|爬虫|接口|算法|游戏|模拟|效果图|小工具|工具))|实现(一个|个|下)?|重构|调试|编译|部署|代码|脚本|算法|函数|接口|数据库|前端|后端|爬虫|修复?(bug|错误|代码|崩溃)|开发(一个|个)?|程序/,
+  // 日本語
+  /(プログラム|コード|実装|関数|クラス|デバッグ|リファクタ|コンパイル|アルゴリズム|スクリプト|開発|バグ修正)/,
+];
+
+/** Heuristic: does the user's message look like a genuine coding task? */
+export function isLikelyCodingTask(prompt: string | undefined): boolean {
+  if (!prompt || typeof prompt !== "string") {return false;}
+  return CODING_INTENT_PATTERNS.some((re) => re.test(prompt));
+}
+
+/**
+ * True when this turn should be routed through the ported MetaCoder engine.
+ * Requires: config opt-in (`codingEngine: "metacoder"`) + an anthropic-messages model
+ * (the engine only supports that wire format) + the message actually looks like a
+ * coding task. Ordinary chat falls through to the fast pi-coding-agent.
+ * (`codingEngine: "metacoder-always"` skips the heuristic and routes every turn.)
+ */
 export function shouldUseMetaCoderEngine(params: EmbeddedRunAttemptParams): boolean {
-  return params.config?.codingEngine === "metacoder" && params.model.api === "anthropic-messages";
+  const mode = params.config?.codingEngine;
+  if (mode !== "metacoder" && mode !== "metacoder-always") {return false;}
+  if (params.model.api !== "anthropic-messages") {return false;}
+  if (mode === "metacoder-always") {return true;}
+  return isLikelyCodingTask(params.prompt);
 }
 
 /** Load the engine bundle copied into dist/coding-engine/ next to the built output. */

@@ -454,7 +454,7 @@ export const WinClawSchema = z
       .strict()
       .optional(),
     models: ModelsConfigSchema,
-    codingEngine: z.enum(["metacoder", "pi"]).optional(),
+    codingEngine: z.enum(["metacoder", "metacoder-always", "pi"]).optional(),
     nodeHost: NodeHostSchema,
     agents: AgentsSchema,
     tools: ToolsSchema,

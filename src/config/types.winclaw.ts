@@ -94,12 +94,13 @@ export type WinClawConfig = {
   plugins?: PluginsConfig;
   models?: ModelsConfig;
   /**
-   * Which engine drives coding turns. "metacoder" routes coding turns through the
-   * ported MetaCoder engine (packages/coding-engine); anything else (default) uses
-   * the built-in pi-coding-agent. Only engages for anthropic-messages models.
-   * Off by default — explicit opt-in.
+   * Which engine drives coding turns (anthropic-messages models only):
+   * - "metacoder": route GENUINE coding tasks through the ported MetaCoder engine
+   *   (heuristic on the message); ordinary chat stays on the fast pi-coding-agent.
+   * - "metacoder-always": route every turn through the MetaCoder engine.
+   * - "pi" / unset (default): always use the built-in pi-coding-agent.
    */
-  codingEngine?: "metacoder" | "pi";
+  codingEngine?: "metacoder" | "metacoder-always" | "pi";
   nodeHost?: NodeHostConfig;
   agents?: AgentsConfig;
   tools?: ToolsConfig;
