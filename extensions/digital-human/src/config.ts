@@ -241,6 +241,77 @@ export const SessionConfigSchema = z
 export type SessionConfig = z.infer<typeof SessionConfigSchema>;
 
 // ---------------------------------------------------------------------------
+// Avatar provider (Stage 1b — MuseTalk vs BytePlus)
+// ---------------------------------------------------------------------------
+
+/**
+ * MuseTalk (dh-saas) connection settings.
+ *
+ * When `dh.provider === "musetalk"` the avatar video is produced by the
+ * dh-saas MuseTalk worker reached via WebRTC. The server mints a session
+ * (`POST {dhsaasUrl}/api/v1/sessions`) with `input_mode: "passthrough"` and
+ * forwards the resulting stream descriptor to the browser, which performs the
+ * SDP/ICE exchange directly for the avatar *video*.
+ *
+ * In the "道B" (brain-on-winclaw) architecture the L20 VM is a **pure MuseTalk
+ * renderer**: winclaw runs Qwen3.5-omni-flash-realtime itself (ASR + LLM + TTS,
+ * with identity + memory + tools) and pushes the resulting TTS PCM to the VM
+ * over the control WebSocket. The VM no longer owns the dialogue brain, so the
+ * dialogue prompt is owned by winclaw — see {@link MuseTalkConfigSchema.shape.systemPrompt}.
+ * The `dhMode` (function_calling / legacy) selector is now honoured in musetalk
+ * mode too (it used to apply to BytePlus only).
+ */
+export const MuseTalkConfigSchema = z
+  .object({
+    /** Base URL of the dh-saas session API. @default "https://localhost:8443" */
+    dhsaasUrl: z.string().default("https://localhost:8443"),
+    /** Tenant bearer token used as `Authorization: Bearer {tenantToken}`. @default "" */
+    tenantToken: z.string().default(""),
+    /** Fallback role_id when a session does not specify one. @default "role_default_system" */
+    defaultRoleId: z.string().default("role_default_system"),
+    /**
+     * @deprecated In the "道B" (brain-on-winclaw) architecture this field is
+     * obsolete: winclaw owns the dialogue prompt (the Qwen instructions are
+     * assembled from the identity markdown + memory and applied via
+     * `session.update`), and the L20 VM is a pure MuseTalk renderer with no LLM.
+     * The musetalk branch therefore no longer forwards `system_prompt` to
+     * dh-saas.
+     *
+     * Retained for backward-compatibility only — removing it would break
+     * validation of existing `winclaw.json` files that still set it. The value
+     * is simply ignored in 道B; set the persona/language via the workspace
+     * identity files (SOUL/IDENTITY/USER/AGENTS/…) instead.
+     *
+     * Historical behaviour (pre-道B / when the VM still ran Qwen-omni): when set,
+     * the dh-saas Worker used it as the Qwen-omni instructions instead of the VM
+     * YAML default, letting the avatar speak in any language / persona. @default ""
+     */
+    systemPrompt: z.string().default(""),
+  })
+  .prefault({});
+
+export type MuseTalkConfig = z.infer<typeof MuseTalkConfigSchema>;
+
+/**
+ * Avatar provider selection block.
+ *
+ * - `"musetalk"` (default): dh-saas WebRTC avatar. In 道B winclaw runs the Qwen
+ *   brain and pushes TTS PCM to the VM; the VM only renders the lip-sync video.
+ * - `"byteplus"`: existing ByteDance virtual-human pipeline (rollback path).
+ *
+ * Added additively in Stage 1b — does not affect `qwen` / `bytedance`. The
+ * `dhMode` selector now applies to both providers (musetalk honours it too).
+ */
+export const DhConfigSchema = z
+  .object({
+    provider: z.enum(["musetalk", "byteplus"]).default("musetalk"),
+    musetalk: MuseTalkConfigSchema,
+  })
+  .prefault({});
+
+export type DhConfig = z.infer<typeof DhConfigSchema>;
+
+// ---------------------------------------------------------------------------
 // Root schema
 // ---------------------------------------------------------------------------
 
@@ -267,6 +338,9 @@ export type SessionConfig = z.infer<typeof SessionConfigSchema>;
  *   and TTS in a single WS, calling winclaw tools via function calls.
  * - `"legacy_pipeline"`: the original STT → Gateway chat → TTS three-stage
  *   pipeline. Kept as a safety fallback during rollout.
+ *
+ * Applies to both avatar providers: in 道B the musetalk branch also honours
+ * `dhMode` (it previously short-circuited before this was read).
  *
  * Overridable per-process via the `DH_MODE` environment variable.
  */
@@ -297,6 +371,8 @@ export const digitalHumanConfigSchema = z
     dhTool: DhToolConfigSchema,
     /** See {@link DhModeSchema}. */
     dhMode: DhModeSchema.optional(),
+    /** See {@link DhConfigSchema} — Stage 1b avatar provider selection. */
+    dh: DhConfigSchema,
   })
   .strict();
 

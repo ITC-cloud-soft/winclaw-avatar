@@ -81,6 +81,7 @@ import { resolveInjectedAssistantIdentity } from "./assistant-identity.ts";
 import { loadAssistantIdentity as loadAssistantIdentityInternal } from "./controllers/assistant-identity.ts";
 import { loadSettings, type UiSettings } from "./storage.ts";
 import { type ChatAttachment, type ChatQueueItem, type CronFormState } from "./ui-types.ts";
+import { subscribeLocale } from "../i18n/index.ts";
 
 declare global {
   interface Window {
@@ -118,6 +119,7 @@ export class WinClawApp extends LitElement {
   @state() dhErrorMessage: string | null = null;
   @state() dhLayoutMode: string = "split";
   @state() dhIsThinking = false;
+  @state() dhAvailable = false;
   @state() theme: ThemeMode = this.settings.theme ?? "system";
   @state() themeResolved: ResolvedTheme = "dark";
   @state() hello: GatewayHelloOk | null = null;
@@ -126,6 +128,8 @@ export class WinClawApp extends LitElement {
   private eventLogBuffer: EventLogEntry[] = [];
   private toolStreamSyncTimer: number | null = null;
   private sidebarCloseTimer: number | null = null;
+  private _unsubLocale?: () => void;
+  private _onFullscreenChange = () => this.requestUpdate();
 
   @state() assistantName = injectedAssistantIdentity.name;
   @state() assistantAvatar = injectedAssistantIdentity.avatar;
@@ -392,6 +396,8 @@ export class WinClawApp extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
+    this._unsubLocale = subscribeLocale(() => this.requestUpdate());
+    document.addEventListener("fullscreenchange", this._onFullscreenChange);
     handleConnected(this as unknown as Parameters<typeof handleConnected>[0]);
   }
 
@@ -400,6 +406,8 @@ export class WinClawApp extends LitElement {
   }
 
   disconnectedCallback() {
+    this._unsubLocale?.();
+    document.removeEventListener("fullscreenchange", this._onFullscreenChange);
     handleDisconnected(this as unknown as Parameters<typeof handleDisconnected>[0]);
     super.disconnectedCallback();
   }

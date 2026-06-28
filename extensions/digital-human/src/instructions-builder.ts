@@ -25,6 +25,38 @@ export interface InstructionsInput {
   soulMd?: string;
   /** IDENTITY.md raw content (same truncation rules as {@link soulMd}). */
   identityMd?: string;
+  /**
+   * USER.md raw content — who the owner is. Folded into the [IDENTITY] role
+   * section so the avatar knows its owner (plan §5.1). Truncated to
+   * {@link MAX_USER_CHARS}.
+   */
+  userMd?: string;
+  /**
+   * AGENTS.md raw content — behaviour rules. Folded into the [IDENTITY] role
+   * section (plan §5.1). Truncated to {@link MAX_AGENTS_CHARS}.
+   */
+  agentsMd?: string;
+  /**
+   * TOOLS.md raw content — workspace tool catalogue / usage notes. Folded in
+   * as role context after the higher-priority files. Truncated to
+   * {@link MAX_EXTRA_CHARS}.
+   */
+  toolsMd?: string;
+  /**
+   * HEARTBEAT.md raw content — periodic / proactive behaviour rules. Folded in
+   * as role context. Truncated to {@link MAX_EXTRA_CHARS}.
+   */
+  heartbeatMd?: string;
+  /**
+   * BOOTSTRAP.md raw content — startup behaviour notes. Folded in as role
+   * context. Truncated to {@link MAX_EXTRA_CHARS}.
+   */
+  bootstrapMd?: string;
+  /**
+   * BOOT.md raw content — optional boot notes (absent on most workspaces).
+   * Folded in as role context. Truncated to {@link MAX_EXTRA_CHARS}.
+   */
+  bootMd?: string;
   /** Anything else the caller wants to append verbatim. */
   additionalContext?: string;
 }
@@ -32,6 +64,18 @@ export interface InstructionsInput {
 /** Max chars kept from SOUL.md / IDENTITY.md before tail-truncation. */
 const MAX_SOUL_CHARS = 2_000;
 const MAX_IDENTITY_CHARS = 2_000;
+/**
+ * Max chars kept from USER.md / AGENTS.md before tail-truncation. These rank
+ * just below SOUL/IDENTITY in the role-priority order (plan §5.1).
+ */
+const MAX_USER_CHARS = 1_000;
+const MAX_AGENTS_CHARS = 1_500;
+/**
+ * Max chars kept from each of the lower-priority extra files
+ * (TOOLS/HEARTBEAT/BOOTSTRAP/BOOT) before tail-truncation. Kept small so they
+ * fill leftover budget without crowding out the higher-priority files.
+ */
+const MAX_EXTRA_CHARS = 800;
 /** Hard ceiling for the assembled instructions string. */
 const MAX_TOTAL = 10_000;
 /** Suffix appended when a section is truncated. */
@@ -53,13 +97,29 @@ export function buildInstructions(input: InstructionsInput): string {
     relationship,
     soulMd,
     identityMd,
+    userMd,
+    agentsMd,
+    toolsMd,
+    heartbeatMd,
+    bootstrapMd,
+    bootMd,
     additionalContext,
   } = input;
 
   const time = formatJapaneseTime(new Date());
 
+  // Role files, highest priority first. SOUL/IDENTITY/USER/AGENTS are the
+  // canonical four; TOOLS/HEARTBEAT/BOOTSTRAP/BOOT fill leftover budget. The
+  // whole [IDENTITY] section (plus everything else) is still hard-capped at
+  // MAX_TOTAL at the end, so even if every file is full we degrade gracefully.
   const soul = truncate(soulMd ?? "", MAX_SOUL_CHARS);
   const identity = truncate(identityMd ?? "", MAX_IDENTITY_CHARS);
+  const user = truncate(userMd ?? "", MAX_USER_CHARS);
+  const agents = truncate(agentsMd ?? "", MAX_AGENTS_CHARS);
+  const tools = truncate(toolsMd ?? "", MAX_EXTRA_CHARS);
+  const heartbeat = truncate(heartbeatMd ?? "", MAX_EXTRA_CHARS);
+  const bootstrap = truncate(bootstrapMd ?? "", MAX_EXTRA_CHARS);
+  const boot = truncate(bootMd ?? "", MAX_EXTRA_CHARS);
 
   const relationshipLine = relationship
     ? `関係性: ${relationship}`
@@ -91,13 +151,22 @@ export function buildInstructions(input: InstructionsInput): string {
       `DETECTION RULE: If the owner spoke Japanese, every non-proper-noun word in your reply must be rendered with Japanese phonetics. If you are about to output a word whose pronunciation you are uncertain about, use a Japanese equivalent instead.`,
   );
 
+  // Role section — fold in all available role markdown (plan §5.1). Ordered by
+  // priority so that, if MAX_TOTAL clips the tail later, the most important
+  // files (SOUL/IDENTITY/USER/AGENTS) survive ahead of the extras.
   sections.push(
     `[IDENTITY]\n` +
       `あなたは主人の AI 伴侶 **${avatarName}** です。\n` +
       `${relationshipLine}\n` +
       `${nicknameLine}` +
       (identity ? `\n\n--- IDENTITY.md ---\n${identity}` : "") +
-      (soul ? `\n\n--- SOUL.md ---\n${soul}` : ""),
+      (soul ? `\n\n--- SOUL.md ---\n${soul}` : "") +
+      (user ? `\n\n--- USER.md ---\n${user}` : "") +
+      (agents ? `\n\n--- AGENTS.md ---\n${agents}` : "") +
+      (tools ? `\n\n--- TOOLS.md ---\n${tools}` : "") +
+      (heartbeat ? `\n\n--- HEARTBEAT.md ---\n${heartbeat}` : "") +
+      (bootstrap ? `\n\n--- BOOTSTRAP.md ---\n${bootstrap}` : "") +
+      (boot ? `\n\n--- BOOT.md ---\n${boot}` : ""),
   );
 
   sections.push(

@@ -1,5 +1,6 @@
 import { html, nothing } from "lit";
 import type { PersonalInfoData } from "../controllers/personal-info.ts";
+import { t } from "../../i18n/index.js";
 
 export type PersonalInfoProps = {
   loading: boolean;
@@ -20,9 +21,9 @@ export function renderPersonalInfo(props: PersonalInfoProps) {
     <section class="card">
       <div class="row" style="justify-content: space-between; align-items: flex-start;">
         <div>
-          <div class="card-title">個人情報</div>
+          <div class="card-title">${t("personal.title")}</div>
           <div class="card-sub">
-            AI助手に紐づく従業員情報を管理します。保存時にGRCサーバーへ自動同期されます。
+            ${t("personal.subtitle")}
           </div>
         </div>
         <button
@@ -30,7 +31,7 @@ export function renderPersonalInfo(props: PersonalInfoProps) {
           ?disabled=${props.loading}
           @click=${props.onRefresh}
         >
-          ${props.loading ? "読み込み中…" : "再読み込み"}
+          ${props.loading ? t("personal.loading") : t("personal.reload")}
         </button>
       </div>
 
@@ -54,44 +55,44 @@ export function renderPersonalInfo(props: PersonalInfoProps) {
           ? html`
               <div style="margin-top: 20px; display: flex; flex-direction: column; gap: 16px;">
                 <label class="field">
-                  <span class="field-label">従業員ID</span>
+                  <span class="field-label">${t("personal.employeeId")}</span>
                   <input
                     type="text"
                     .value=${form.employeeId ?? ""}
-                    placeholder="例: EMP-001"
+                    placeholder=${t("personal.employeeIdPlaceholder")}
                     @input=${(e: Event) =>
                       props.onFieldChange("employeeId", (e.target as HTMLInputElement).value)}
                   />
                 </label>
 
                 <label class="field">
-                  <span class="field-label">従業員名</span>
+                  <span class="field-label">${t("personal.employeeName")}</span>
                   <input
                     type="text"
                     .value=${form.employeeName ?? ""}
-                    placeholder="例: 山田 太郎"
+                    placeholder=${t("personal.employeeNamePlaceholder")}
                     @input=${(e: Event) =>
                       props.onFieldChange("employeeName", (e.target as HTMLInputElement).value)}
                   />
                 </label>
 
                 <label class="field">
-                  <span class="field-label">連絡先メールアドレス</span>
+                  <span class="field-label">${t("personal.email")}</span>
                   <input
                     type="email"
                     .value=${form.employeeEmail ?? ""}
-                    placeholder="例: taro.yamada@example.com"
+                    placeholder=${t("personal.emailPlaceholder")}
                     @input=${(e: Event) =>
                       props.onFieldChange("employeeEmail", (e.target as HTMLInputElement).value)}
                   />
                 </label>
 
                 <label class="field">
-                  <span class="field-label">GRC URL</span>
+                  <span class="field-label">${t("personal.grcUrl")}</span>
                   <input
                     type="url"
                     .value=${form.grcUrl ?? ""}
-                    placeholder="例: https://grc.myaiportal.net"
+                    placeholder=${t("personal.grcUrlPlaceholder")}
                     @input=${(e: Event) =>
                       props.onFieldChange("grcUrl", (e.target as HTMLInputElement).value)}
                   />
@@ -101,7 +102,7 @@ export function renderPersonalInfo(props: PersonalInfoProps) {
                   class="callout"
                   style="margin-top: 4px; opacity: 0.7; font-size: 0.85em;"
                 >
-                  <div><strong>Node ID:</strong> ${form.nodeId || "未接続"}</div>
+                  <div><strong>Node ID:</strong> ${form.nodeId || t("personal.notConnected")}</div>
                 </div>
 
                 <div class="row" style="margin-top: 8px; gap: 8px;">
@@ -110,14 +111,14 @@ export function renderPersonalInfo(props: PersonalInfoProps) {
                     ?disabled=${!props.dirty || props.saving}
                     @click=${props.onSave}
                   >
-                    ${props.saving ? "保存中…" : "保存"}
+                    ${props.saving ? t("personal.saving") : t("personal.save")}
                   </button>
                 </div>
               </div>
             `
           : props.loading
-            ? html`<div class="muted" style="margin-top: 16px;">読み込み中…</div>`
-            : html`<div class="muted" style="margin-top: 16px;">個人情報を読み込めませんでした。</div>`
+            ? html`<div class="muted" style="margin-top: 16px;">${t("personal.loading")}</div>`
+            : html`<div class="muted" style="margin-top: 16px;">${t("personal.loadError")}</div>`
       }
     </section>
   `;

@@ -16,6 +16,8 @@
  *   {@link createAuthRateLimiter} and pass it where needed.
  */
 
+import { createHash } from "node:crypto";
+
 import { isLoopbackAddress, resolveClientIp } from "./net.js";
 
 // ---------------------------------------------------------------------------
@@ -39,6 +41,25 @@ export const AUTH_RATE_LIMIT_SCOPE_DEFAULT = "default";
 export const AUTH_RATE_LIMIT_SCOPE_SHARED_SECRET = "shared-secret";
 export const AUTH_RATE_LIMIT_SCOPE_DEVICE_TOKEN = "device-token";
 export const AUTH_RATE_LIMIT_SCOPE_HOOK_AUTH = "hook-auth";
+
+/**
+ * Append a short, non-reversible fingerprint of the presented credential to a
+ * base rate-limit scope so failed attempts bucket PER CREDENTIAL, not just per
+ * IP (WF1-C, docs/productization-plan). This prevents one bad/stale token
+ * replayed from a single IP — or a shared NAT egress IP — from locking out every
+ * other user/credential on that IP. Returns the base scope unchanged when no
+ * credential is present (blank-credential floods stay IP-bucketed by design).
+ * The fingerprint is a truncated SHA-256 of the secret (never the raw value, so
+ * it is safe as a Map key and is never logged in full).
+ */
+export function appendCredentialToScope(
+  baseScope: string,
+  credential: string | undefined | null,
+): string {
+  if (!credential) return baseScope;
+  const fingerprint = createHash("sha256").update(credential).digest("hex").slice(0, 12);
+  return `${baseScope}#${fingerprint}`;
+}
 
 export interface RateLimitEntry {
   /** Timestamps (epoch ms) of recent failed attempts inside the window. */

@@ -211,7 +211,17 @@ function renderControls(state: DHPanelState) {
         <span class="dh-btn-label">${micLabel}</span>
       </button>
 
-      <!-- Camera toggle (hidden — vision not yet supported) -->
+      <!-- Camera toggle -->
+      <button
+        class="dh-btn ${state.cameraEnabled ? "active" : "inactive"}"
+        @click=${state.onToggleCamera}
+        title=${camLabel}
+        aria-pressed=${state.cameraEnabled ? "true" : "false"}
+        aria-label=${camLabel}
+      >
+        ${renderCameraIcon(state.cameraEnabled)}
+        <span class="dh-btn-label">${camLabel}</span>
+      </button>
 
       <!-- Voice selector (CosyVoice) -->
       <select
@@ -234,10 +244,17 @@ function renderControls(state: DHPanelState) {
           <option value="longshuo">小硕·清朗</option>
           <option value="longlaotie">老铁·浑厚</option>
         </optgroup>
+        <optgroup label="日本語">
+          <option value="loongtomoka_v3">Tomoka·日語♀</option>
+          <option value="loongriko_v3">Riko·二次元♀</option>
+        </optgroup>
+        <optgroup label="English">
+          <option value="loongstella">Stella·EN♀</option>
+          <option value="loongbella">Bella·EN♀</option>
+        </optgroup>
         <optgroup label="特色">
           <option value="longjielidou">杰力豆·童声</option>
-          <option value="loongstella">Stella·英文♀</option>
-          <option value="loongbella">Bella·英文♀</option>
+          <option value="loongkyong_v3">Kyong·한국어♀</option>
         </optgroup>
       </select>
 

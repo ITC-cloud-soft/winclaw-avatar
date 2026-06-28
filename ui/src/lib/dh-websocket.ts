@@ -13,7 +13,34 @@
 // Public types
 // ---------------------------------------------------------------------------
 
-export interface DHStreamInfo {
+/** ICE server entry as sent by the dh-saas / MuseTalk backend. */
+export interface DHIceServer {
+  urls: string[];
+  username?: string;
+  credential?: string;
+}
+
+/**
+ * Stream info for the MuseTalk (dh-saas / OpenAvatarChat / FastRTC) provider.
+ * The browser negotiates a WebRTC peer connection directly with the VM.
+ */
+export interface MuseTalkStreamInfo {
+  provider: 'musetalk';
+  sessionId: string;
+  ownerToken: string;
+  /** POST {sdp,type:"offer",webrtc_id} → {sdp} answer. */
+  offerUrl: string;
+  controlWs: string;
+  iceServers: DHIceServer[];
+  expiresAt: string;
+}
+
+/**
+ * Stream info for the legacy BytePlus (ByteRTC) provider.
+ * `provider` may be absent on older backends — treat undefined as byteplus.
+ */
+export interface BytePlusStreamInfo {
+  provider?: 'byteplus';
   /** Backend sends camelCase; we normalize both conventions */
   liveId: string;
   roomId: string;
@@ -21,7 +48,14 @@ export interface DHStreamInfo {
   viewerUid: string;
   rtcAppId: string;
   publisherUid: string;
+  status?: string;
 }
+
+/**
+ * Discriminated union over `provider`. Branch on `info.provider === "musetalk"`
+ * to pick the WebRTC-direct viewer; otherwise use the ByteRTC viewer.
+ */
+export type DHStreamInfo = MuseTalkStreamInfo | BytePlusStreamInfo;
 
 export type DHMessageHandler = {
   /** WebSocket opened and ready to send. */
@@ -36,6 +70,12 @@ export type DHMessageHandler = {
   onAiResponseStarted?: () => void;
   /** The AI finished generating a response. */
   onAiResponseDone?: () => void;
+  /**
+   * The user barged in (server VAD detected speech over the avatar). The
+   * backend has already dropped the VM's lip-sync queue; the client should
+   * flush any locally-buffered TTS so the old turn stops playing.
+   */
+  onAiSpeechInterrupted?: () => void;
   /** The AI is thinking (agent processing). */
   onAiThinking?: (thinking: boolean) => void;
   /** The ASR engine produced a transcript of what the user said. */
@@ -44,6 +84,11 @@ export type DHMessageHandler = {
   onError?: (code: string, message: string) => void;
   /** WebSocket closed (after exhausting reconnect attempts). */
   onClose?: () => void;
+  /**
+   * The backend proxied a MuseTalk SDP answer (or an error) in response to a
+   * `musetalk_offer` we sent. Settable per-offer on the instance.
+   */
+  onMuseTalkAnswer?: (data: { sdp?: string; error?: string }) => void;
 };
 
 // ---------------------------------------------------------------------------
@@ -71,8 +116,17 @@ export class DHWebSocket {
   private isManualClose = false;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
 
+  /**
+   * Per-offer MuseTalk answer callback. The DH session controller assigns this
+   * just before sending an offer; the dispatcher invokes it when the proxied
+   * `musetalk_answer` frame arrives. Mutable so each offer gets a fresh
+   * resolve/reject pair.
+   */
+  onMuseTalkAnswer?: (data: { sdp?: string; error?: string }) => void;
+
   constructor(handlers: DHMessageHandler) {
     this.handlers = handlers;
+    this.onMuseTalkAnswer = handlers.onMuseTalkAnswer;
   }
 
   // ---------------------------------------------------------------------------
@@ -115,6 +169,14 @@ export class DHWebSocket {
    */
   sendVideo(base64: string): void {
     this.send({ type: 'video', data: base64 });
+  }
+
+  /**
+   * Send a MuseTalk WebRTC SDP offer to the backend for server-side proxying
+   * to the dh-saas VM. The answer arrives via {@link onMuseTalkAnswer}.
+   */
+  sendMuseTalkOffer(sdp: string, webrtcId: string): void {
+    this.send({ type: 'musetalk_offer', data: { sdp, webrtcId } });
   }
 
   /**
@@ -324,11 +386,29 @@ export class DHWebSocket {
         break;
 
       // ------------------------------------------------------------------
+      // Barge-in: user spoke over the avatar (道B). Flush local TTS.
+      // ------------------------------------------------------------------
+      case 'speech_started':
+      case 'ai_speech_interrupted':
+        this.handlers.onAiSpeechInterrupted?.();
+        break;
+
+      // ------------------------------------------------------------------
       // User speech transcript (ASR)
       // ------------------------------------------------------------------
       case 'user_transcript': {
         const transcript = ((data.content ?? data.transcript ?? msg.content ?? '') as string);
         this.handlers.onUserTranscript?.(transcript);
+        break;
+      }
+
+      // ------------------------------------------------------------------
+      // MuseTalk SDP answer (proxied server-side from the dh-saas VM)
+      // ------------------------------------------------------------------
+      case 'musetalk_answer': {
+        const sdp = data.sdp as string | undefined;
+        const error = data.error as string | undefined;
+        this.onMuseTalkAnswer?.({ sdp, error });
         break;
       }
 

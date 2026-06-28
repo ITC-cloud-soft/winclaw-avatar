@@ -14,9 +14,29 @@ export class AudioStreamPlayer {
   private nextStartTime = 0;
   private _isPlaying = false;
   private defaultSampleRate: number;
+  /**
+   * Fixed delay (seconds) added to the START of each response so the locally
+   * played TTS audio lands in sync with the avatar's lips. In 道B the audio is
+   * played here immediately while the lip video travels winclaw → control WS →
+   * VM MuseTalk GPU → WebRTC, so the lips otherwise lag the voice. Tunable per
+   * session (URL `?audioDelay=<ms>`); 0 = legacy immediate playback.
+   */
+  private readonly playbackDelaySec: number;
+  /** True until the first chunk of the current response is scheduled. */
+  private freshStart = true;
+  /**
+   * All buffer sources currently scheduled or playing. Tracked so {@link flush}
+   * can stop them on barge-in — calling source.start() commits a buffer to the
+   * output regardless of the scheduling cursor, so resetting nextStartTime alone
+   * does not silence audio that is already queued.
+   */
+  private activeSources = new Set<AudioBufferSourceNode>();
 
-  constructor(sampleRate = 24000) {
+  constructor(sampleRate = 24000, playbackDelaySec = 0) {
     this.defaultSampleRate = sampleRate;
+    this.playbackDelaySec = Number.isFinite(playbackDelaySec) && playbackDelaySec > 0
+      ? playbackDelaySec
+      : 0;
   }
 
   // ---------------------------------------------------------------------------
@@ -64,16 +84,24 @@ export class AudioStreamPlayer {
       source.connect(ctx.destination);
 
       const now = ctx.currentTime;
-      if (this.nextStartTime < now) {
-        // We fell behind (first chunk, or a gap in delivery) – snap to now
+      if (this.freshStart) {
+        // Start of a new response: offset playback by playbackDelaySec to
+        // compensate for the MuseTalk video pipeline latency so the lips line up
+        // with the voice. The offset carries forward via nextStartTime += duration.
+        this.nextStartTime = now + this.playbackDelaySec;
+        this.freshStart = false;
+      } else if (this.nextStartTime < now) {
+        // Fell behind mid-stream (a delivery gap) – snap to now, no extra offset.
         this.nextStartTime = now;
       }
 
       source.start(this.nextStartTime);
       this.nextStartTime += buffer.duration;
       this._isPlaying = true;
+      this.activeSources.add(source);
 
       source.onended = () => {
+        this.activeSources.delete(source);
         // If nothing else is queued, mark playback as idle.
         if (ctx.currentTime >= this.nextStartTime - 0.01) {
           this._isPlaying = false;
@@ -90,12 +118,43 @@ export class AudioStreamPlayer {
    * new context on the next playChunk() call.
    */
   stop(): void {
+    this.cancelActiveSources();
     if (this.audioContext) {
       this.audioContext.close().catch(() => {});
       this.audioContext = null;
     }
     this.nextStartTime = 0;
     this._isPlaying = false;
+    this.freshStart = true;
+  }
+
+  /**
+   * Stop all currently scheduled/playing audio without tearing down the
+   * AudioContext. Used on barge-in: when the user speaks over the avatar the
+   * backend interrupts the VM's lip-sync queue, so the buffered TTS that is
+   * still scheduled locally must be dropped too — otherwise the old turn keeps
+   * playing over the interruption. The player stays reusable; the next
+   * playChunk() schedules immediately from the reset cursor.
+   */
+  flush(): void {
+    this.cancelActiveSources();
+    this.nextStartTime = 0;
+    this._isPlaying = false;
+    this.freshStart = true;
+  }
+
+  /** Stop and discard every tracked buffer source. */
+  private cancelActiveSources(): void {
+    for (const source of this.activeSources) {
+      try {
+        source.onended = null;
+        source.stop();
+        source.disconnect();
+      } catch {
+        // Already stopped/ended — ignore.
+      }
+    }
+    this.activeSources.clear();
   }
 
   /**
@@ -106,6 +165,7 @@ export class AudioStreamPlayer {
   resume(): void {
     this.nextStartTime = 0;
     this._isPlaying = false;
+    this.freshStart = true;
     // If the context was suspended (e.g. browser autoplay policy), wake it.
     if (this.audioContext?.state === 'suspended') {
       this.audioContext.resume().catch(() => {});

@@ -8,6 +8,7 @@ import { readTailscaleWhoisIdentity, type TailscaleWhoisIdentity } from "../infr
 import { safeEqualSecret } from "../security/secret-equal.js";
 import {
   AUTH_RATE_LIMIT_SCOPE_SHARED_SECRET,
+  appendCredentialToScope,
   type AuthRateLimiter,
   type RateLimitCheckResult,
 } from "./auth-rate-limit.js";
@@ -403,7 +404,15 @@ export async function authorizeGatewayConnect(
     params.clientIp ??
     resolveRequestClientIp(req, trustedProxies, params.allowRealIpFallback === true) ??
     req?.socket?.remoteAddress;
-  const rateLimitScope = params.rateLimitScope ?? AUTH_RATE_LIMIT_SCOPE_SHARED_SECRET;
+  // WF1-C: bucket the limiter PER CREDENTIAL (token/password fingerprint), not just
+  // per IP, so one bad/stale token from an IP can't lock out every user on that IP
+  // (the core gateway lockout the customer hit). check/recordFailure/reset below all
+  // use this same scope → consistent per-credential counting. No credential → base
+  // scope (blank-credential floods stay IP-bucketed). docs/productization-plan WF1-C.
+  const rateLimitScope = appendCredentialToScope(
+    params.rateLimitScope ?? AUTH_RATE_LIMIT_SCOPE_SHARED_SECRET,
+    connectAuth?.token ?? connectAuth?.password,
+  );
   if (limiter) {
     const rlCheck: RateLimitCheckResult = limiter.check(ip, rateLimitScope);
     if (!rlCheck.allowed) {

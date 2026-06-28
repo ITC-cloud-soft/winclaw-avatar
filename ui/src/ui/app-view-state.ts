@@ -320,6 +320,8 @@ export type AppViewState = {
   dhErrorMessage?: string | null;
   /** Active DHSessionController instance (present while a session is live). */
   dhController?: import('./dh-session-controller.ts').DHSessionController;
+  /** Whether the DH plugin is available (health probe succeeded). */
+  dhAvailable?: boolean;
 
   // Command palette & session tabs
   commandPaletteOpen: boolean;

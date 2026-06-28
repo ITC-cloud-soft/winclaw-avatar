@@ -37,7 +37,13 @@ import WebSocket from "ws";
 import { QwenRealtimeClient } from "./integrations/qwen-realtime.js";
 import { NotifyBridge } from "./notify-bridge.js";
 import { DigitalHumanManager } from "./integrations/byteplus-rtc.js";
+import {
+  createAvatarProvider,
+  BytePlusAvatarProvider,
+  type AvatarStreamProvider,
+} from "./integrations/avatar-provider.js";
 import { AudioResampler } from "./integrations/audio-resampler.js";
+import { MuseTalkAudioSink } from "./integrations/musetalk-audio-sink.js";
 import { IdentityLoader } from "./identity-loader.js";
 import { resolveDhMode, type DhMode, type DigitalHumanConfig } from "./config.js";
 import type { GatewayBridge, ChatEventPayload } from "./gateway-bridge.js";
@@ -45,7 +51,7 @@ import { synthesizeSpeech } from "./integrations/qwen-tts.js";
 import { WINCLAW_DH_TOOLS } from "./tools/catalog.js";
 import { ToolRouter } from "./tool-router.js";
 import type { WebSearchResult } from "./tool-router.js";
-import type { MemoryCorePlugin } from "./memory-bridge.js";
+import { MemoryBridge, type MemoryCorePlugin } from "./memory-bridge.js";
 import { buildInstructions } from "./instructions-builder.js";
 
 /**
@@ -81,15 +87,40 @@ export interface HandlerDeps {
   webSearchFn?: (query: string) => Promise<WebSearchResult>;
 }
 
+/**
+ * Payload of the `dh_stream_info` frame sent to the browser.
+ *
+ * `provider` selects which sub-fields are populated:
+ *
+ * - **musetalk** — WebRTC descriptor for the dh-saas avatar. The browser does
+ *   the SDP exchange against `offerUrl` directly and uses `iceServers` /
+ *   `controlWs`. `sessionId` / `ownerToken` / `expiresAt` identify the lease.
+ * - **byteplus** — legacy ByteRTC descriptor (liveId/roomId/viewerToken/…),
+ *   carried through the index signature.
+ */
+export interface DhStreamInfoData {
+  provider: "musetalk" | "byteplus";
+  sessionId?: string;
+  ownerToken?: string;
+  offerUrl?: string;
+  controlWs?: string;
+  iceServers?: Array<{ urls: string[]; username?: string; credential?: string }>;
+  expiresAt?: string;
+  /** BytePlus passthrough fields (liveId, roomId, viewerToken, …). */
+  [key: string]: unknown;
+}
+
 // Wire-protocol message shapes sent to the browser client
 type ClientMessage =
-  | { type: "dh_stream_info"; data: Record<string, unknown> }
+  | { type: "dh_stream_info"; data: DhStreamInfoData }
   | { type: "ai_audio"; data: { audio: string; format: "pcm16"; sample_rate: number } }
   | { type: "ai_text"; data: { content: string; is_delta: boolean } }
   | { type: "ai_thinking"; data: { thinking: boolean } }
   | { type: "user_transcript"; data: { content: string } }
   | { type: "ai_response_started" }
   | { type: "ai_response_done" }
+  | { type: "ai_speech_interrupted" }
+  | { type: "musetalk_answer"; data: { sdp?: string; error?: string } }
   | { type: "tool_call"; data: { name: string; args: string; callId: string } }
   | {
       type: "tool_result";
@@ -145,7 +176,41 @@ export class RealtimeSessionHandler {
   private notifyBridge: NotifyBridge | null = null;
   private dhManager!: DigitalHumanManager;
   private dhLiveId!: string;
+  /**
+   * Avatar stream provider (Stage 1b). Selected by `config.dh.provider`.
+   * 道B — MuseTalk mode mints a dh-saas WebRTC session for the browser's video
+   * AND runs the full Qwen pipeline in winclaw, pushing TTS PCM to the VM over
+   * {@link museTalkAudioSink}. BytePlus mode wraps {@link DigitalHumanManager}
+   * and preserves the legacy pipeline.
+   */
+  private avatarProvider!: AvatarStreamProvider;
+  /**
+   * MuseTalk SDP-offer proxy state. In MuseTalk mode the browser cannot POST
+   * its SDP offer directly to the dh-saas VM (no CORS header), so the offer is
+   * proxied server-to-server through {@link handleMuseTalkOffer}.
+   */
+  private museTalkOfferUrl: string | undefined;
+  private museTalkOwnerToken: string | undefined;
+  /**
+   * 道B render path — true when the avatar provider is MuseTalk. In this mode
+   * winclaw runs the full Qwen pipeline (identity + memory + tools) and pushes
+   * the resulting TTS PCM to the L20 VM (pure renderer) over
+   * {@link museTalkAudioSink}; the VM returns avatar video over WebRTC.
+   */
+  private isMuseTalkMode = false;
+  /**
+   * winclaw → L20 VM control-WS audio sink (MuseTalk render mode only). Drains
+   * Qwen's 24kHz TTS PCM to the VM in 4800-byte frames with NO resample. `null`
+   * in BytePlus mode or before {@link initialize} runs.
+   */
+  private museTalkAudioSink: MuseTalkAudioSink | null = null;
   private identityLoader!: IdentityLoader;
+  /**
+   * Memory bridge — only populated in `function_calling` mode when a memory
+   * plugin is supplied. Records user/assistant turns to `memory/YYYY-MM-DD.md`
+   * and preloads recent memory into the Qwen instructions at session start.
+   */
+  private memoryBridge: MemoryBridge | null = null;
   private readonly audioResampler: AudioResampler = new AudioResampler();
 
   // DH audio buffering — paced at real-time rate to keep lip sync aligned
@@ -232,17 +297,159 @@ export class RealtimeSessionHandler {
     const identity = await this.identityLoader.load();
     console.info(`[Handler:${this.sessionId}] Identity loaded: ${identity.name} (dhMode=${this.dhMode})`);
 
-    // 2. Connect Qwen Realtime. The callback set and instructions differ
-    //    between the two dhModes — see the file-level docstring.
-    const isFC = this.dhMode === "function_calling";
+    // Stage 1b: select avatar provider.
+    //
+    // 道B — MuseTalk (default) is now a PURE RENDERER. winclaw still runs the
+    // entire Qwen-omni dialogue pipeline (identity + memory + tools); it mints
+    // a dh-saas session for the browser's video WebRTC AND opens a control WS
+    // ({@link MuseTalkAudioSink}) to push TTS PCM to the VM. BytePlus preserves
+    // the legacy ByteDance pipeline as a rollback path.
+    this.avatarProvider = createAvatarProvider(this.config);
+    this.isMuseTalkMode = this.avatarProvider.kind === "musetalk";
+    const isMuseTalk = this.isMuseTalkMode;
+    console.info(`[DH:${this.sessionId}] 🎭 avatar provider=${this.avatarProvider.kind}`);
 
-    const instructions = isFC
+    if (isMuseTalk) {
+      // --- MuseTalk mode: mint dh-saas session, forward the video descriptor,
+      //     and open the control WS audio sink. Then fall through to build the
+      //     Qwen client + tools + identity + memory exactly like FC mode. ---
+      const roleId = this.config.dh.musetalk.defaultRoleId;
+      const streamInfo = await this.avatarProvider.startSession({
+        liveId: this.sessionId,
+        roleId,
+      });
+
+      // Store offer-proxy state — the browser sends its SDP offer over the DH
+      // WebSocket and we forward it server-side (see handleMuseTalkOffer).
+      this.museTalkOfferUrl = streamInfo.offerUrl;
+      this.museTalkOwnerToken = streamInfo.ownerToken;
+
+      this.sendToClient({
+        type: "dh_stream_info",
+        data: {
+          provider: "musetalk",
+          sessionId: streamInfo.sessionId,
+          ownerToken: streamInfo.ownerToken,
+          offerUrl: streamInfo.offerUrl,
+          controlWs: streamInfo.controlWs,
+          iceServers: streamInfo.iceServers,
+          expiresAt: streamInfo.expiresAt,
+        },
+      });
+
+      // Open the winclaw → VM control WS. NO resample: Qwen's 24kHz TTS PCM is
+      // pushed verbatim in 4800-byte frames (see handleQwenAudio). Connect is
+      // best-effort — a failure here must not abort the session (the browser's
+      // video WebRTC + Qwen audio playback still work); the sink logs + drops
+      // until reconnect.
+      if (streamInfo.controlWs) {
+        this.museTalkAudioSink = new MuseTalkAudioSink({
+          controlWsUrl: streamInfo.controlWs,
+          ownerToken: streamInfo.ownerToken,
+          logger: {
+            info: (msg) => console.info(`[DH:${this.sessionId}] ${msg}`),
+            warn: (msg) => console.warn(`[DH:${this.sessionId}] ${msg}`),
+            error: (msg, err) =>
+              console.error(`[DH:${this.sessionId}] ${msg}`, err ?? ""),
+          },
+        });
+        try {
+          await this.museTalkAudioSink.connect();
+          console.info(
+            `[DH:${this.sessionId}] 🔊 MuseTalk audio sink connected (frame=${MuseTalkAudioSink.FRAME_SIZE}B @24kHz, no-resample)`,
+          );
+        } catch (err) {
+          console.error(
+            `[DH:${this.sessionId}] MuseTalk audio sink connect failed — TTS lip-sync disabled this session:`,
+            err,
+          );
+        }
+      } else {
+        console.warn(
+          `[DH:${this.sessionId}] MuseTalk session returned no controlWs — TTS cannot reach the VM`,
+        );
+      }
+    }
+
+    // 2. Connect Qwen Realtime. The callback set and instructions differ
+    //    between the two dhModes — see the file-level docstring. MuseTalk mode
+    //    always runs the FC-style Qwen pipeline (winclaw is the brain in 道B).
+    const isFC = this.dhMode === "function_calling" || isMuseTalk;
+
+    // 道B lite-voice (speed mode): WINCLAW_DH_LITE_VOICE=1 runs qwen as a lean
+    // voice assistant — drops the Japanese persona role files (USER/AGENTS/TOOLS/
+    // HEARTBEAT/BOOTSTRAP/BOOT) and the memory preload, replacing them with a clean
+    // language-neutral prompt (so the avatar follows the user's spoken language
+    // instead of defaulting to Japanese). NOTE: the 6 agent tools stay ON — the
+    // earlier latency turned out to be the L20→dashscope cross-border link (fixed
+    // by the intl endpoint), not the tools, so SNS/email integration is preserved.
+    const liteVoice = process.env.WINCLAW_DH_LITE_VOICE === "1";
+
+    // Wire the memory bridge before building instructions so recent memory can
+    // be preloaded into the prompt. Only active in FC-style mode with a backend.
+    let memoryPreload = "";
+    if (isFC && !liteVoice && this.memory && this.config.memory?.recordConversation !== false) {
+      try {
+        this.memoryBridge = new MemoryBridge(
+          this.workspaceDir,
+          this.memory,
+          "digital-human",
+          {
+            flushDebounceMs: this.config.memory?.flushDebounceMs,
+            preloadDays: this.config.memory?.preloadDays,
+          },
+        );
+        memoryPreload = await this.memoryBridge.preloadRecentMemory();
+        if (memoryPreload) {
+          console.info(
+            `[DH:${this.sessionId}] 🧠 Preloaded recent memory (${memoryPreload.length} chars) into instructions`,
+          );
+        }
+      } catch (err) {
+        console.error(`[Handler:${this.sessionId}] MemoryBridge init failed:`, err);
+        this.memoryBridge = null;
+        memoryPreload = "";
+      }
+    }
+
+    // lite-voice (clean voice companion): a dedicated, language-NEUTRAL prompt
+    // with a STRICT "match the user's spoken language" rule. The full winclaw
+    // identity (rawSoul/rawIdentity) is a Japanese persona written in Japanese,
+    // which made the avatar reply in Japanese even when asked to speak Chinese —
+    // the language-match rule inside buildInstructions was drowned out by the
+    // Japanese persona/examples. In lite mode we drop that persona entirely and
+    // use this clean prompt, so the avatar follows whatever language the user
+    // speaks (Serena is a zh-capable voice; the only blocker was the prompt).
+    const liteName = (identity.nickname || identity.name || "").trim();
+    const liteVoicePrompt =
+      `${liteName ? `你的名字是 ${liteName}。` : ""}你是一个温暖、自然的语音陪伴助手,正在和用户进行实时语音对话。\n\n` +
+      `最重要的规则:\n` +
+      `1. 语言:必须用「用户当前所说的语言」回复。用户说中文你就说中文,说英文就说英文,说日文就说日文。` +
+      `当用户切换语言、或明确要求你换语言时(例如说「说中文」),立刻从此用那种语言回复。` +
+      `绝不要用用户没有使用的语言回答。一句话之内只用一种语言的词汇和发音,不要混语言。\n` +
+      `2. 简短:这是语音对话,回复要短、口语化,通常 1-2 句话。不要废话、不要复述问题、不要「让我…」之类的开场白。\n` +
+      `3. 自然:像朋友一样温暖、直接、切题。\n` +
+      `4. 工具:当用户要你做事——发消息到 WhatsApp/Slack/Telegram/LINE/邮件、上网查实时信息、回忆过去的事、执行任务——就调用相应的工具去完成,完成后用一句口语化的话汇报结果。不确定用哪个工具时,用 ask_winclaw 把需求原样转给 winclaw。日常闲聊不要调用工具。`;
+    const instructions = liteVoice
+      ? liteVoicePrompt
+      : isFC
       ? buildInstructions({
           avatarName: identity.name,
           nickname: identity.nickname,
           relationship: identity.relationship,
           soulMd: identity.rawSoul,
           identityMd: identity.rawIdentity,
+          // 道B §5.1 — fold all 8 canonical role files into the prompt so the
+          // avatar shares winclaw's full identity (SOUL/IDENTITY/USER/AGENTS/
+          // TOOLS/HEARTBEAT/BOOTSTRAP/BOOT).
+          userMd: identity.rawUser,
+          agentsMd: identity.rawAgents,
+          toolsMd: identity.rawTools,
+          heartbeatMd: identity.rawHeartbeat,
+          bootstrapMd: identity.rawBootstrap,
+          bootMd: identity.rawBoot,
+          // Recent-memory summary (today/yesterday) as additional context.
+          additionalContext: memoryPreload || undefined,
         })
       : identity.instructions;
 
@@ -297,11 +504,43 @@ export class RealtimeSessionHandler {
         void this.dispatchFunctionCall(call);
       });
 
+      // 道B barge-in — server VAD detected the user speaking over the avatar.
+      // Tell the MuseTalk VM to drop its queued lip-sync audio so the new turn
+      // starts cleanly. No-op in BytePlus mode (sink is null).
+      this.qwenClient.on("speechStarted", () => {
+        if (this.museTalkAudioSink) {
+          this.museTalkAudioSink.interrupt();
+        }
+        // Forward barge-in to the browser so it flushes the AudioStreamPlayer.
+        // Without this, TTS PCM already buffered/scheduled locally keeps playing
+        // after the VM has dropped its lip-sync queue, so the user hears the old
+        // turn over their interruption. No-op for BytePlus (audio rides ByteRTC).
+        this.sendToClient({ type: "ai_speech_interrupted" });
+      });
+
+      // Memory recording (道B §5.2) — persist both sides of the dialogue to
+      // memory/YYYY-MM-DD.md via the debounced MemoryBridge. Guarded on the
+      // bridge being present (FC mode + memory backend + recordConversation).
+      if (this.memoryBridge) {
+        const bridge = this.memoryBridge;
+        this.qwenClient.on("userTranscript", (transcript: string) => {
+          bridge.recordUserSpeech(transcript);
+        });
+        this.qwenClient.on("textDone", (text: string) => {
+          bridge.recordAIResponse(text);
+        });
+      }
+
       // CRITICAL: register tools BEFORE connect() so the initial session.update
       // Qwen sends on open already includes the tool catalogue. If we set tools
       // after connect, Qwen's first message is "tools=[]" and it commits to a
       // no-tool behavior mode; the subsequent update_session({tools}) arrives
       // too late to change its stance. (Matches Python reference pattern.)
+      // Tools stay ON even in lite-voice mode: the earlier latency was the
+      // L20→dashscope cross-border link (fixed via the intl endpoint), NOT the
+      // tools. Restore the 6 agent tools (ask_winclaw / task_run / channel_send /
+      // memory_search / memory_get / internet_search) so the avatar can drive
+      // SNS/email integration (WhatsApp/Slack/Telegram/LINE) again.
       this.qwenClient.setTools(WINCLAW_DH_TOOLS);
     }
 
@@ -383,37 +622,61 @@ export class RealtimeSessionHandler {
       this.qwenClient.ttsOnly = true;
     }
 
-    // Memory is fully handled by the Gateway agent via chat.send.
-    // No memory injection into Qwen — all reasoning goes through Gateway
-    // which has embedding search, memory plugins, and full tool access.
+    // 道B identity hot-reload (§5.1) — when enabled, re-load the 8 role files on
+    // change and push the rebuilt instructions into the live Qwen session. Only
+    // meaningful in FC-style mode (legacy uses identity.instructions verbatim
+    // and never updates mid-session).
+    if (isFC && this.config.identity?.hotReload) {
+      this.identityLoader.watch((updated) => {
+        const rebuilt = buildInstructions({
+          avatarName: updated.name,
+          nickname: updated.nickname,
+          relationship: updated.relationship,
+          soulMd: updated.rawSoul,
+          identityMd: updated.rawIdentity,
+          userMd: updated.rawUser,
+          agentsMd: updated.rawAgents,
+          toolsMd: updated.rawTools,
+          heartbeatMd: updated.rawHeartbeat,
+          bootstrapMd: updated.rawBootstrap,
+          bootMd: updated.rawBoot,
+        });
+        const ok = this.qwenClient.updateInstructions(rebuilt);
+        console.info(
+          `[Handler:${this.sessionId}] 🔄 Identity hot-reload applied (${rebuilt.length} chars, sent=${ok})`,
+        );
+      });
+      console.info(`[Handler:${this.sessionId}] Identity hot-reload watching 8 role files`);
+    }
 
-    // 3. Start DH session (ByteDance virtual human)
-    this.dhManager = new DigitalHumanManager({
-      virtualHumanAppId: this.config.bytedance.appId,
-      virtualHumanToken: this.config.bytedance.token,
-      virtualHumanRole: this.config.bytedance.role,
-      byteRtcAppId: this.config.bytedance.rtcAppId,
-      byteRtcAppKey: this.config.bytedance.rtcAppKey,
-      defaultRoomId: this.config.bytedance.rtcRoomId,
-      defaultPushUid: this.config.bytedance.rtcPushUid,
-      defaultViewerUid: this.config.bytedance.rtcViewerUid,
-    });
+    // 3. In MuseTalk (道B) mode the dh-saas session was already minted above and
+    //    audio flows over the control WS — there is no ByteDance manager. Only
+    //    BytePlus mode drives DigitalHumanManager + the PCM pacer (drainDhFrames).
+    if (!isMuseTalk) {
+      // Start DH session (ByteDance virtual human) via the BytePlus provider.
+      // The provider wraps DigitalHumanManager; we keep a reference to the
+      // underlying manager so the PCM pacer (drainDhFrames) can drive lip-sync
+      // exactly as before.
+      const byteProvider = this.avatarProvider as BytePlusAvatarProvider;
+      this.dhManager = byteProvider.manager;
 
-    const streamInfo = await this.dhManager.startSession({ liveId: this.sessionId });
-    this.dhLiveId = streamInfo.liveId;
+      const streamInfo = await this.avatarProvider.startSession({ liveId: this.sessionId });
+      this.dhLiveId = streamInfo.liveId as string;
 
-    this.sendToClient({
-      type: "dh_stream_info",
-      data: {
-        liveId: streamInfo.liveId,
-        roomId: streamInfo.roomId,
-        viewerToken: streamInfo.viewerToken,
-        viewerUid: streamInfo.viewerUid,
-        rtcAppId: streamInfo.rtcAppId,
-        publisherUid: streamInfo.publisherUid,
-        status: streamInfo.status,
-      },
-    });
+      this.sendToClient({
+        type: "dh_stream_info",
+        data: {
+          provider: "byteplus",
+          liveId: streamInfo.liveId,
+          roomId: streamInfo.roomId,
+          viewerToken: streamInfo.viewerToken,
+          viewerUid: streamInfo.viewerUid,
+          rtcAppId: streamInfo.rtcAppId,
+          publisherUid: streamInfo.publisherUid,
+          status: streamInfo.status,
+        },
+      });
+    }
 
     // 4. Register Gateway chat event handler. In function_calling mode Qwen
     //    handles reasoning directly so we skip the gateway wire entirely.
@@ -426,11 +689,16 @@ export class RealtimeSessionHandler {
     this.initialized = true;
     console.info(`[Handler:${this.sessionId}] Initialized (sessionKey=${this.sessionKey})`);
 
-    // A1: Structured startup log — one-line status for session diagnosability
+    // A1: Structured startup log — one-line status for session diagnosability.
+    // In 道B MuseTalk mode qwen is the brain (NOT bypassed) and audio flows over
+    // the control WS sink; render is the pure VM.
     const toolNames = isFC ? WINCLAW_DH_TOOLS.map(t => t.name).join(",") : "n/a";
     console.info(
       `[DH:${this.sessionId}] 🎯 Session started  mode=${this.dhMode}  ` +
-      `tools=${toolNames}  memory=${!!this.memory}  bus=${!!this.winclawBus}  ` +
+      `provider=${this.avatarProvider.kind}  qwen=brain  ` +
+      `audioSink=${this.museTalkAudioSink?.isConnected ?? false}  ` +
+      `tools=${toolNames}  memory=${!!this.memory}  memoryBridge=${!!this.memoryBridge}  ` +
+      `hotReload=${!!(isFC && this.config.identity?.hotReload)}  bus=${!!this.winclawBus}  ` +
       `voice=${this.config.qwen.voice}  sessionKey=${this.sessionKey}`
     );
   }
@@ -511,6 +779,62 @@ export class RealtimeSessionHandler {
       this.sendToClient({ type: "user_transcript", data: { content: text } });
     } catch (err) {
       console.error(`[Handler:${this.sessionId}] handleTextMessage error:`, err);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // MuseTalk SDP-offer proxy (browser → winclaw → dh-saas VM)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Forward the browser's WebRTC SDP offer to the dh-saas VM server-side.
+   *
+   * The browser cannot POST the offer directly to the VM (it returns no
+   * `Access-Control-Allow-Origin` header → CORS preflight fails), so the
+   * offer arrives over the existing DH WebSocket and we relay it here with
+   * the owner token. The resulting answer SDP (or an error) is sent back to
+   * the browser as a `musetalk_answer` frame. WebRTC media still flows
+   * direct browser↔VM via TURN.
+   */
+  async handleMuseTalkOffer(sdp: string, webrtcId: string): Promise<void> {
+    console.info(
+      `[DH:${this.sessionId}] 📡 handleMuseTalkOffer ENTER sdpLen=${sdp?.length} wid=${webrtcId} offerUrl=${this.museTalkOfferUrl}`,
+    );
+    try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (this.museTalkOwnerToken) headers["Authorization"] = `Bearer ${this.museTalkOwnerToken}`;
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 15000);
+      console.info(`[DH:${this.sessionId}] 📡 fetching offer endpoint…`);
+      const resp = await fetch(this.museTalkOfferUrl!, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ sdp, type: "offer", webrtc_id: webrtcId }),
+        signal: ctrl.signal,
+      });
+      clearTimeout(t);
+      console.info(`[DH:${this.sessionId}] 📡 fetch returned status=${resp.status}`);
+      if (!resp.ok) {
+        const txt = await resp.text();
+        this.sendToClient({
+          type: "musetalk_answer",
+          data: { error: `offer ${resp.status}: ${txt.slice(0, 200)}` },
+        });
+        return;
+      }
+      const ans = (await resp.json()) as { sdp?: string };
+      if (!ans?.sdp) {
+        this.sendToClient({ type: "musetalk_answer", data: { error: "empty answer sdp" } });
+        return;
+      }
+      console.info(`[DH:${this.sessionId}] 📡 MuseTalk offer proxied → ${resp.status}`);
+      this.sendToClient({ type: "musetalk_answer", data: { sdp: ans.sdp } });
+    } catch (err) {
+      console.error(`[DH:${this.sessionId}] 📡 handleMuseTalkOffer CATCH:`, err);
+      this.sendToClient({
+        type: "musetalk_answer",
+        data: { error: err instanceof Error ? err.message : String(err) },
+      });
     }
   }
 
@@ -671,6 +995,24 @@ export class RealtimeSessionHandler {
    *   chunks, resample 24 kHz → 16 kHz, and feed the DH pacer.
    */
   private handleQwenAudio(pcm: Buffer, sampleRate: number): void {
+    // 道B MuseTalk render path — push Qwen's TTS PCM straight to the VM over the
+    // control WS in 4800-byte frames with NO resample (Qwen 24kHz verbatim; the
+    // VM down-converts internally). Also forward to the browser as `ai_audio`
+    // for local playback (the VM returns video only — no audio track).
+    if (this.isMuseTalkMode) {
+      if (this.museTalkAudioSink) {
+        this.museTalkAudioSink.sendAudioData(pcm);
+      }
+      this.sendToClient({
+        type: "ai_audio",
+        data: {
+          audio: pcm.toString("base64"),
+          format: "pcm16",
+          sample_rate: sampleRate,
+        },
+      });
+      return;
+    }
     if (this.dhMode !== "function_calling") {
       // Legacy mode: realtime audio is VAD-only noise; ignored by design.
       return;
@@ -816,13 +1158,27 @@ export class RealtimeSessionHandler {
   }
 
   private handleResponseStarted(): void {
-    // Only notify browser for TTS responses (not VAD auto)
-    if (this.ttsInProgress) {
+    // The browser mutes the mic on ai_response_started to suppress echo into
+    // Qwen during AI speech. In 道B (MuseTalk) and function_calling mode Qwen
+    // itself produces the audio, so ttsInProgress is never set (that flag only
+    // tracks the legacy HTTP-TTS path); gate on the mode instead so mic-mute
+    // actually engages. Legacy TTS-only mode still gates on ttsInProgress to
+    // avoid notifying for suppressed VAD-auto responses.
+    if (this.isMuseTalkMode || this.dhMode === "function_calling" || this.ttsInProgress) {
       this.sendToClient({ type: "ai_response_started" });
     }
   }
 
   private handleResponseDone(): void {
+    if (this.isMuseTalkMode) {
+      // 道B — flush the residual partial frame and release the MuseTalk pipeline
+      // back to idle (blink/breathe). No DH pacer in this mode.
+      this.sendToClient({ type: "ai_response_done" });
+      if (this.museTalkAudioSink) {
+        this.museTalkAudioSink.audioEnd();
+      }
+      return;
+    }
     if (this.dhMode === "function_calling") {
       // Qwen finished emitting audio → finalize the DH pacer.
       this.sendToClient({ type: "ai_response_done" });
@@ -1088,6 +1444,27 @@ export class RealtimeSessionHandler {
       console.error(`[Handler:${this.sessionId}] NotifyBridge dispose error:`, err);
     }
 
+    // Close the 道B MuseTalk control-WS audio sink (idempotent, never throws).
+    try {
+      if (this.museTalkAudioSink) {
+        this.museTalkAudioSink.close();
+        this.museTalkAudioSink = null;
+      }
+    } catch (err) {
+      console.error(`[Handler:${this.sessionId}] MuseTalk audio sink close error:`, err);
+    }
+
+    // Finalize memory — flush pending turns, write the session-end marker, and
+    // trigger a reindex so this dialogue is searchable next session.
+    try {
+      if (this.memoryBridge) {
+        await this.memoryBridge.onSessionEnd("数字人语音会话结束");
+        this.memoryBridge = null;
+      }
+    } catch (err) {
+      console.error(`[Handler:${this.sessionId}] MemoryBridge onSessionEnd error:`, err);
+    }
+
     // Disconnect Qwen
     try {
       if (this.qwenClient) await this.qwenClient.disconnect();
@@ -1095,13 +1472,14 @@ export class RealtimeSessionHandler {
       console.error(`[Handler:${this.sessionId}] Qwen disconnect error:`, err);
     }
 
-    // Stop DH session
+    // Stop avatar provider (MuseTalk best-effort no-op; BytePlus stops the
+    // underlying DH session).
     try {
-      if (this.dhManager && this.dhLiveId) {
-        await this.dhManager.stopSession(this.dhLiveId);
+      if (this.avatarProvider) {
+        await this.avatarProvider.stop();
       }
     } catch (err) {
-      console.error(`[Handler:${this.sessionId}] DH stop error:`, err);
+      console.error(`[Handler:${this.sessionId}] avatar provider stop error:`, err);
     }
 
     // Stop identity watcher

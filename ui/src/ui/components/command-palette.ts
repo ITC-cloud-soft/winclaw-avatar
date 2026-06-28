@@ -2,7 +2,8 @@ import { html, nothing } from "lit";
 import { ref } from "lit/directives/ref.js";
 import { repeat } from "lit/directives/repeat.js";
 import { icons } from "../icons.ts";
-import { COMMANDS, COMMAND_CATEGORIES, type CommandDefinition } from "../navigation.ts";
+import { getCommands, getCommandCategories, type CommandDefinition } from "../navigation.ts";
+import { t } from "../../i18n/index.js";
 
 export type CommandPaletteProps = {
   open: boolean;
@@ -31,10 +32,11 @@ export function renderCommandPalette(props: CommandPaletteProps) {
   let highlightIndex = 0;
 
   const getFilteredCommands = (q: string) => {
+    const commands = getCommands();
     if (!q.trim()) {
-      return COMMANDS;
+      return commands;
     }
-    return COMMANDS.filter((cmd) => matchesQuery(cmd, q));
+    return commands.filter((cmd) => matchesQuery(cmd, q));
   };
 
   const handleKeydown = (e: KeyboardEvent) => {
@@ -98,14 +100,14 @@ export function renderCommandPalette(props: CommandPaletteProps) {
     let htmlContent = "";
 
     if (recentCmds.length > 0) {
-      htmlContent += `<div class="command-palette__category">最近のコマンド</div>`;
+      htmlContent += `<div class="command-palette__category">${t("commands.recentCommands")}</div>`;
       for (const cmd of recentCmds) {
         htmlContent += renderCommandItemHtml(cmd, itemIndex === highlightIndex);
         itemIndex++;
       }
     }
 
-    for (const cat of COMMAND_CATEGORIES) {
+    for (const cat of getCommandCategories()) {
       const cmds = nonRecentFiltered.filter((c) => c.category === cat);
       if (cmds.length === 0) {
         continue;
@@ -123,7 +125,7 @@ export function renderCommandPalette(props: CommandPaletteProps) {
     listEl.querySelectorAll(".command-palette__item").forEach((el) => {
       el.addEventListener("click", () => {
         const cmdId = (el as HTMLElement).dataset.cmdId;
-        const cmd = COMMANDS.find((c) => c.id === cmdId);
+        const cmd = getCommands().find((c) => c.id === cmdId);
         if (cmd) {
           props.onSelect(cmd);
         }
@@ -132,11 +134,12 @@ export function renderCommandPalette(props: CommandPaletteProps) {
   };
 
   // Build initial list
+  const allCommands = getCommands();
   const recentIds = props.recentCommandIds;
   const recentCmds = recentIds
-    .map((id) => COMMANDS.find((c) => c.id === id))
+    .map((id) => allCommands.find((c) => c.id === id))
     .filter(Boolean) as CommandDefinition[];
-  const nonRecent = COMMANDS.filter((c) => !recentIds.includes(c.id));
+  const nonRecent = allCommands.filter((c) => !recentIds.includes(c.id));
 
   let flatIndex = 0;
 
@@ -168,7 +171,7 @@ export function renderCommandPalette(props: CommandPaletteProps) {
           <input
             type="text"
             class="command-palette__input"
-            placeholder="コマンドを検索..."
+            placeholder=${t("commands.searchPlaceholder")}
             @input=${handleInput}
             @keydown=${handleKeydown}
             ${ref((el) => {
@@ -182,7 +185,7 @@ export function renderCommandPalette(props: CommandPaletteProps) {
           ${
             recentCmds.length > 0
               ? html`
-                <div class="command-palette__category">最近のコマンド</div>
+                <div class="command-palette__category">${t("commands.recentCommands")}</div>
                 ${repeat(
                   recentCmds,
                   (cmd) => `recent-${cmd.id}`,
@@ -195,7 +198,7 @@ export function renderCommandPalette(props: CommandPaletteProps) {
               : nothing
           }
           ${repeat(
-            COMMAND_CATEGORIES,
+            getCommandCategories(),
             (cat) => cat,
             (cat) => {
               const cmds = nonRecent.filter((c) => c.category === cat);

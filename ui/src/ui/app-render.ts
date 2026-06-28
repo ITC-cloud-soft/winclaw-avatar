@@ -284,40 +284,39 @@ function buildMainLayoutState(
         }
       },
       onToggleCamera: () => {
-        // Fully independent camera management — no controller dependency
-        const win = window as unknown as Record<string, unknown>;
-        const currentStream = win.__dhCameraStream as MediaStream | null;
-        if (currentStream && currentStream.active) {
-          // Camera is on → turn off
-          currentStream.getTracks().forEach(t => t.stop());
-          win.__dhCameraStream = null;
-          const el = document.getElementById('camera-preview') as HTMLVideoElement | null;
-          if (el) el.srcObject = null;
+        // Delegate to the DH session controller so that turning the camera on
+        // also starts VideoCapture + sends frames to Qwen via WebSocket.
+        // Previously this handler managed the PiP preview independently,
+        // which meant no frames ever reached the server.
+        try {
+          const win = window as unknown as Record<string, unknown>;
+          const ctrl = win.__dhController as
+            | { toggleCamera?: () => boolean }
+            | null;
+          if (!ctrl || typeof ctrl.toggleCamera !== 'function') {
+            console.warn('[Camera] Controller not ready — start a DH session first');
+            return;
+          }
+          const nowEnabled = ctrl.toggleCamera();
+          state.dhCameraEnabled = nowEnabled;
+          console.log(`[Camera] Toggled via controller → enabled=${nowEnabled}`);
+        } catch (err) {
+          console.error('[Camera] Toggle failed:', err);
           state.dhCameraEnabled = false;
-        } else {
-          // Camera is off → turn on
-          state.dhCameraEnabled = true;
-          navigator.mediaDevices.getUserMedia({
-            video: { width: { ideal: 320 }, height: { ideal: 240 }, facingMode: 'user' },
-            audio: false,
-          }).then(async (stream) => {
-            win.__dhCameraStream = stream;
-            for (let i = 0; i < 30; i++) {
-              const el = document.getElementById('camera-preview') as HTMLVideoElement | null;
-              if (el) { el.srcObject = stream; return; }
-              await new Promise(r => setTimeout(r, 50));
-            }
-          }).catch((err) => {
-            console.error('[Camera] Access denied:', err);
-            state.dhCameraEnabled = false;
-          });
         }
       },
       onToggleSubtitle: () => {
         state.dhSubtitleVisible = !(state.dhSubtitleVisible ?? true);
       },
-      onVideoDoubleClick: () => {
-        state.dhLayoutMode = state.dhLayoutMode === "dh-fullscreen" ? "split" : "dh-fullscreen";
+      onVideoDoubleClick: async () => {
+        if (document.fullscreenElement) {
+          await document.exitFullscreen();
+        } else {
+          const panel = document.querySelector(".panel-dh") as HTMLElement | null;
+          if (panel) {
+            await panel.requestFullscreen();
+          }
+        }
       },
       selectedVoice: (state as unknown as Record<string, string>).dhSelectedVoice ?? "longxiaochun",
       onVoiceChange: (voiceId: string) => {
@@ -1326,13 +1325,13 @@ export function renderApp(state: AppViewState) {
         }
 
         ${
-          isDH
+          isDH && state.dhAvailable
             ? renderMainLayout(buildMainLayoutState(state, () => void createNewChatSession(state)))
             : nothing
         }
 
         ${
-          state.tab === "chat"
+          state.tab === "chat" || (isDH && !state.dhAvailable)
             ? html`${renderChatControls(state, {
                 onNewSession: () => void createNewChatSession(state),
               })}${renderChat({

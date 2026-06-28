@@ -5,11 +5,18 @@
  *
  * Design reference: §4.1 of winclaw-avatar-digital-human-realtime-voice-plan.md
  *
- * Bootstrap files read (from workspace directory):
- *  - SOUL.md     → personality, values, tone  (highest priority, up to 1500 chars)
- *  - USER.md     → who the owner is           (up to 500 chars)
- *  - IDENTITY.md → name, vibe, style          (up to 500 chars)
- *  - AGENTS.md   → behaviour rules            (up to 800 chars)
+ * Bootstrap files read (from workspace directory). The four high-priority
+ * files drive the legacy TTS-only `instructions` string; the four extra files
+ * are loaded raw so the function-calling builder can fold them into the role
+ * section (plan §5.1, "8-markdown role sharing"):
+ *  - SOUL.md      → personality, values, tone  (highest priority, up to 1500 chars)
+ *  - USER.md      → who the owner is           (up to 500 chars)
+ *  - IDENTITY.md  → name, vibe, style          (up to 500 chars)
+ *  - AGENTS.md    → behaviour rules            (up to 800 chars)
+ *  - TOOLS.md     → available tools / usage    (raw, FC builder budgets it)
+ *  - HEARTBEAT.md → periodic / proactive rules (raw, FC builder budgets it)
+ *  - BOOTSTRAP.md → startup behaviour          (raw, FC builder budgets it)
+ *  - BOOT.md      → optional boot notes        (raw; absent on most workspaces)
  *
  * Truncation strategy mirrors WinClaw's existing bootstrap trimmer:
  *   head 70% + tail 20% + truncation marker
@@ -41,6 +48,17 @@ const BUDGET_SOUL = 1_500;
 const BUDGET_USER = 500;
 const BUDGET_IDENTITY = 500;
 const BUDGET_AGENTS = 800;
+
+/**
+ * Per-file character budgets applied when exposing the four *extra* canonical
+ * files on {@link DigitalHumanIdentity}. These do not feed the legacy TTS-only
+ * `instructions` string — the function-calling builder consumes them — but we
+ * cap them on load so a runaway file cannot blow the assembled FC prompt.
+ */
+const BUDGET_TOOLS = 1_500;
+const BUDGET_HEARTBEAT = 800;
+const BUDGET_BOOTSTRAP = 800;
+const BUDGET_BOOT = 800;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -88,6 +106,31 @@ export interface DigitalHumanIdentity {
 
   /** Raw content of AGENTS.md (empty string when file is absent). */
   rawAgents: string;
+
+  /**
+   * Raw content of TOOLS.md, truncated to {@link BUDGET_TOOLS}
+   * (empty string when file is absent).
+   */
+  rawTools: string;
+
+  /**
+   * Raw content of HEARTBEAT.md, truncated to {@link BUDGET_HEARTBEAT}
+   * (empty string when file is absent).
+   */
+  rawHeartbeat: string;
+
+  /**
+   * Raw content of BOOTSTRAP.md, truncated to {@link BUDGET_BOOTSTRAP}
+   * (empty string when file is absent).
+   */
+  rawBootstrap: string;
+
+  /**
+   * Raw content of BOOT.md, truncated to {@link BUDGET_BOOT}
+   * (empty string when file is absent — BOOT.md is optional and missing on
+   * most workspaces).
+   */
+  rawBoot: string;
 }
 
 /**
@@ -146,6 +189,10 @@ export class IdentityLoader {
     "IDENTITY.md",
     "USER.md",
     "AGENTS.md",
+    "TOOLS.md",
+    "HEARTBEAT.md",
+    "BOOTSTRAP.md",
+    "BOOT.md",
   ] as const;
 
   /** Effective max character limit (from options or default constant). */
@@ -173,17 +220,29 @@ export class IdentityLoader {
   // -------------------------------------------------------------------------
 
   /**
-   * Read all four bootstrap files from {@link workspaceDir} and assemble a
-   * {@link DigitalHumanIdentity}.  Missing files are silently treated as empty
-   * strings, matching WinClaw's tolerant bootstrap loading behaviour.
+   * Read all eight canonical bootstrap files from {@link workspaceDir} and
+   * assemble a {@link DigitalHumanIdentity}.  Missing files are silently
+   * treated as empty strings, matching WinClaw's tolerant bootstrap loading
+   * behaviour (BOOT.md in particular is absent on most workspaces).
+   *
+   * The four high-priority files (SOUL/IDENTITY/USER/AGENTS) drive the legacy
+   * TTS-only `instructions` string; the four extra files (TOOLS/HEARTBEAT/
+   * BOOTSTRAP/BOOT) are exposed raw (each truncated to its per-file budget) so
+   * the function-calling builder can fold them into the role section — plan
+   * §5.1 "8-markdown role sharing".
    */
   async load(): Promise<DigitalHumanIdentity> {
-    const [soul, identity, user, agents] = await Promise.all([
-      this.readBootstrapFile("SOUL.md"),
-      this.readBootstrapFile("IDENTITY.md"),
-      this.readBootstrapFile("USER.md"),
-      this.readBootstrapFile("AGENTS.md"),
-    ]);
+    const [soul, identity, user, agents, tools, heartbeat, bootstrap, boot] =
+      await Promise.all([
+        this.readBootstrapFile("SOUL.md"),
+        this.readBootstrapFile("IDENTITY.md"),
+        this.readBootstrapFile("USER.md"),
+        this.readBootstrapFile("AGENTS.md"),
+        this.readBootstrapFile("TOOLS.md"),
+        this.readBootstrapFile("HEARTBEAT.md"),
+        this.readBootstrapFile("BOOTSTRAP.md"),
+        this.readBootstrapFile("BOOT.md"),
+      ]);
 
     const name = this.extractField(identity, "name") ?? "WinClaw";
     const vibe = this.extractField(identity, "vibe") ?? "";
@@ -202,6 +261,10 @@ export class IdentityLoader {
       rawIdentity: identity,
       rawUser: user,
       rawAgents: agents,
+      rawTools: this.truncate(tools, BUDGET_TOOLS),
+      rawHeartbeat: this.truncate(heartbeat, BUDGET_HEARTBEAT),
+      rawBootstrap: this.truncate(bootstrap, BUDGET_BOOTSTRAP),
+      rawBoot: this.truncate(boot, BUDGET_BOOT),
     };
   }
 
@@ -287,11 +350,18 @@ export class IdentityLoader {
   }
 
   /**
-   * Register a callback that fires whenever any of the four bootstrap files
-   * change on disk.  Only one watch registration is active at a time; calling
-   * `watch()` again replaces the previous callback (files are re-used).
+   * Register a callback that fires whenever any of the eight canonical
+   * bootstrap files ({@link WATCHED_FILES}) change on disk.  Only one watch
+   * registration is active at a time; calling `watch()` again replaces the
+   * previous callback (files are re-used).
    *
    * Uses Node.js `fs.watch` with a 300 ms debounce to coalesce rapid saves.
+   *
+   * Wiring (see plan §5.1): the handler calls this during init when
+   * `config.identity.hotReload` is enabled, and forwards the reloaded identity
+   * to `qwenClient.updateInstructions()` from inside `callback`. This class
+   * does NOT touch the Qwen client itself — it only re-runs {@link load} and
+   * hands the result back. Always pair with {@link unwatch} on teardown.
    *
    * @param callback - Invoked with the freshly loaded identity after a change.
    *   Async callbacks are awaited; thrown errors are caught and logged.

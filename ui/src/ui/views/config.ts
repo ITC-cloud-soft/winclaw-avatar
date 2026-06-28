@@ -1,4 +1,5 @@
 import { html, nothing } from "lit";
+import { t } from "../../i18n/index.ts";
 import type { ConfigUiHints } from "../types.ts";
 import { hintForPath, humanize, schemaType, type JsonSchema } from "./config-form.shared.ts";
 import { analyzeConfigSchema, renderConfigForm, SECTION_META } from "./config-form.ts";
@@ -449,7 +450,7 @@ export function renderConfig(props: ConfigProps) {
       <!-- Sidebar -->
       <aside class="config-sidebar">
         <div class="config-sidebar__header">
-          <div class="config-sidebar__title">Settings</div>
+          <div class="config-sidebar__title">${t("settings.title")}</div>
           <span
             class="pill pill--sm ${
               validity === "valid" ? "pill--ok" : validity === "invalid" ? "pill--danger" : ""

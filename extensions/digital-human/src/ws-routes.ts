@@ -35,6 +35,7 @@
  * { "type": "user_transcript", "data": { "content": "..." } }
  * { "type": "ai_response_started" }
  * { "type": "ai_response_done" }
+ * { "type": "ai_speech_interrupted" }   // 道B barge-in — client flushes local TTS
  * { "type": "pong" }
  * { "type": "error", "code": "...", "message": "...", "sessionId": "..." }
  * ```
@@ -183,6 +184,7 @@ export type InboundMessage =
   | { type: "audio"; data: string }
   | { type: "video"; data: string }
   | { type: "text"; text: string }
+  | { type: "musetalk_offer"; data: { sdp: string; webrtcId: string } }
   | { type: "ping" }
   | { type: "stop" };
 
@@ -215,6 +217,20 @@ export function parseInboundMessage(raw: unknown): InboundMessage | null {
         return { type: "text", text: msg["text"] };
       }
       return null;
+
+    case "musetalk_offer": {
+      const data = msg["data"];
+      if (
+        data &&
+        typeof data === "object" &&
+        typeof (data as Record<string, unknown>)["sdp"] === "string" &&
+        typeof (data as Record<string, unknown>)["webrtcId"] === "string"
+      ) {
+        const d = data as Record<string, unknown>;
+        return { type: "musetalk_offer", data: { sdp: d["sdp"] as string, webrtcId: d["webrtcId"] as string } };
+      }
+      return null;
+    }
 
     case "ping":
       return { type: "ping" };
@@ -402,6 +418,10 @@ export function registerDigitalHumanRoutes(
 
           case "text":
             currentHandler.handleTextMessage(msg.text);
+            break;
+
+          case "musetalk_offer":
+            void currentHandler.handleMuseTalkOffer(msg.data.sdp, msg.data.webrtcId);
             break;
 
           case "ping":

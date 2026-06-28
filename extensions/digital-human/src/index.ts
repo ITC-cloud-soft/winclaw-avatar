@@ -19,6 +19,8 @@
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { readFile, readdir } from "node:fs/promises";
+import { isAbsolute, join } from "node:path";
 import { ZodError } from "zod";
 import { WebSocketServer, WebSocket, type RawData as WsRawData } from "ws";
 
@@ -29,6 +31,12 @@ import { SessionManager } from "./session-manager.js";
 import type { SessionManagerConfig } from "./session-manager.js";
 import { GatewayBridge } from "./gateway-bridge.js";
 import type { WebSearchResult } from "./tool-router.js";
+import type {
+  MemoryCorePlugin,
+  MemoryGetParams,
+  MemorySearchParams,
+  MemorySearchResult,
+} from "./memory-bridge.js";
 import { parseInboundMessage } from "./ws-routes.js";
 
 // ---------------------------------------------------------------------------
@@ -62,7 +70,119 @@ type WinClawPluginApiMinimal = {
   resolvePath?: (input: string) => string;
 };
 
-// (No stubs needed — all reasoning goes through GatewayBridge)
+// ---------------------------------------------------------------------------
+// Workspace-file-backed memory-core adapter (道B §5.2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Lightweight {@link MemoryCorePlugin} backed directly by the workspace memory
+ * files (`MEMORY.md` + `memory/YYYY-MM-DD.md`).
+ *
+ * winclaw does not currently expose its embedding-backed memory-core plugin to
+ * extensions through the minimal plugin API, so this adapter gives the
+ * digital-human session a real backend without a new dependency:
+ *
+ * - **search** — a keyword scan over the memory files (BM25-ish term overlap),
+ *   returning the best-matching lines. This is the same corpus the MemoryBridge
+ *   writes voice turns into, so recall and recording are symmetric.
+ * - **get** — reads a 1-based line range from a memory file.
+ * - **markDirty / reindex** — no-ops (the scan is always live; nothing to index).
+ *
+ * Used as the `memory` backend for both the FC ToolRouter (`memory_search` /
+ * `memory_get`) and the MemoryBridge preload.
+ */
+class WorkspaceMemoryCore implements MemoryCorePlugin {
+  constructor(private readonly workspaceDir: string) {}
+
+  async search(params: MemorySearchParams): Promise<MemorySearchResult[]> {
+    const topK = params.topK ?? 5;
+    const terms = params.query
+      .toLowerCase()
+      .split(/\s+/)
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0);
+    if (terms.length === 0) return [];
+
+    const files = await this.collectMemoryFiles();
+    const hits: MemorySearchResult[] = [];
+
+    for (const rel of files) {
+      let content: string;
+      try {
+        content = await readFile(join(this.workspaceDir, rel), "utf-8");
+      } catch {
+        continue;
+      }
+      const lines = content.split(/\r?\n/);
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (!line.trim()) continue;
+        const lower = line.toLowerCase();
+        let matched = 0;
+        for (const term of terms) {
+          if (lower.includes(term)) matched++;
+        }
+        if (matched > 0) {
+          hits.push({
+            content: line.trim(),
+            source: rel,
+            score: matched / terms.length,
+            startLine: i + 1,
+            endLine: i + 1,
+          });
+        }
+      }
+    }
+
+    hits.sort((a, b) => b.score - a.score);
+    return hits.slice(0, topK);
+  }
+
+  async get(params: MemoryGetParams): Promise<string> {
+    const abs = isAbsolute(params.filePath)
+      ? params.filePath
+      : join(this.workspaceDir, params.filePath);
+    let content: string;
+    try {
+      content = await readFile(abs, "utf-8");
+    } catch {
+      return "";
+    }
+    const lines = content.split(/\r?\n/);
+    const start = Math.max(1, params.startLine ?? 1);
+    const end = Math.min(lines.length, params.endLine ?? lines.length);
+    if (start > end) return "";
+    return lines.slice(start - 1, end).join("\n");
+  }
+
+  markDirty(): void {
+    /* no-op — the keyword scan is always live. */
+  }
+
+  async reindex(): Promise<void> {
+    /* no-op — nothing to index. */
+  }
+
+  /**
+   * Enumerate the workspace-relative memory files to scan: `MEMORY.md` plus
+   * every `memory/*.md` daily log (newest first). Missing entries are skipped.
+   */
+  private async collectMemoryFiles(): Promise<string[]> {
+    const out: string[] = ["MEMORY.md"];
+    try {
+      const entries = await readdir(join(this.workspaceDir, "memory"));
+      const daily = entries
+        .filter((f) => f.endsWith(".md"))
+        .sort()
+        .reverse()
+        .map((f) => `memory/${f}`);
+      out.push(...daily);
+    } catch {
+      /* no memory/ dir yet — MEMORY.md only. */
+    }
+    return out;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Config loading
@@ -177,10 +297,18 @@ async function startDhWsServer(
   // can be removed from SessionManagerConfig entirely.
   const winclawBus: EventEmitter = new EventEmitter();
 
+  // Memory backend for FC-mode tools (`memory_search` / `memory_get`) and the
+  // MemoryBridge preload/record path (道B §5.2). Backed by the workspace memory
+  // files so recall and recording share one corpus. If winclaw later exposes
+  // its embedding-backed memory-core to extensions, swap this for that instance.
+  const memory: MemoryCorePlugin = new WorkspaceMemoryCore(workspaceDir);
+  log.info(`[digital-human] Memory backend: WorkspaceMemoryCore (${workspaceDir})`);
+
   const managerConfig: SessionManagerConfig = {
     config,
     workspaceDir,
     gwBridge: dhGwBridge,
+    memory,
     winclawBus,
     webSearchFn,
   };
@@ -247,27 +375,16 @@ async function startDhWsServer(
       },
     });
 
-    // Initialize the session (connects to Qwen + ByteDance DH).
-    // The RealtimeSessionHandler will emit dh_stream_info to the client ws
-    // automatically via its sendToClient() during initialize().
-    void (async () => {
-      try {
-        await dhSessionManager!.startSession(sessionId, ws);
-      } catch (err) {
-        const message =
-          err instanceof Error ? err.message : "Session initialization failed";
-        log.error(`[digital-human] Failed to start session ${sessionId}: ${message}`);
-        safeSend(ws, {
-          type: "error",
-          code: "SESSION_INIT_FAILED",
-          message,
-          sessionId,
-        });
-        ws.close(1011, "Session initialization failed");
-        return;
-      }
-
-      // ── Message routing loop ──────────────────────────────────────────
+    // ── Message routing loop ──────────────────────────────────────────
+    // ★ Registered BEFORE the (~5s) async session init below, so the browser's
+    //   MuseTalk WebRTC offer — sent immediately after it receives dh_stream_info
+    //   (emitted mid-init) — is handled instead of silently dropped. Previously
+    //   these listeners were attached only AFTER `await startSession()` completed,
+    //   so an offer arriving during init (reliably so with a slower brain model)
+    //   hit no listener → "musetalk offer proxy timeout" + blank avatar. The
+    //   handler is registered synchronously in startSession (sessions.set) before
+    //   its async init, and museTalkOfferUrl is set before dh_stream_info is
+    //   emitted, so getSession + handleMuseTalkOffer are both valid on arrival.
       ws.on("message", (raw: WsRawData) => {
         // Register activity for the inactivity timeout.
         dhSessionManager!.touchActivity(sessionId);
@@ -312,6 +429,12 @@ async function startDhWsServer(
             currentHandler.handleTextMessage(msg.text);
             break;
 
+          case "musetalk_offer":
+            // MuseTalk WebRTC SDP offer — proxy server-side to dh-saas (the VM
+            // sends no CORS header so the browser can't POST it directly).
+            void currentHandler.handleMuseTalkOffer(msg.data.sdp, msg.data.webrtcId);
+            break;
+
           case "ping":
             safeSend(ws, { type: "pong", sessionId });
             break;
@@ -354,6 +477,26 @@ async function startDhWsServer(
           );
         });
       });
+
+    // ── Initialize the session (async) ────────────────────────────────────
+    // Connects to Qwen + dh-saas and emits dh_stream_info to the client during
+    // initialize(). The listeners above are already attached, so the WebRTC
+    // offer the browser sends right after dh_stream_info is handled (not dropped).
+    void (async () => {
+      try {
+        await dhSessionManager!.startSession(sessionId, ws);
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Session initialization failed";
+        log.error(`[digital-human] Failed to start session ${sessionId}: ${message}`);
+        safeSend(ws, {
+          type: "error",
+          code: "SESSION_INIT_FAILED",
+          message,
+          sessionId,
+        });
+        ws.close(1011, "Session initialization failed");
+      }
     })();
   });
 

@@ -13,8 +13,10 @@
 import { DHWebSocket } from '../lib/dh-websocket.ts';
 import type { DHStreamInfo } from '../lib/dh-websocket.ts';
 import { ByteRTCViewer } from '../lib/byte-rtc-viewer.ts';
+import { MuseTalkWebRTCViewer } from '../lib/musetalk-webrtc-viewer.ts';
 import { AudioRecorder } from '../lib/audio-recorder.ts';
 import { AudioStreamPlayer } from '../lib/audio-player.ts';
+import { VideoCapture } from '../lib/video-capture.ts';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -51,10 +53,61 @@ const UNMUTE_DELAY_MS = 800;
 /** DOM element id of the `<video>` tag rendered by digital-human.ts. */
 const VIDEO_RENDER_DOM_ID = 'dh-video-player';
 
+/** Default local-TTS playback delay (ms) compensating the MuseTalk video pipeline
+ *  latency (winclaw → control WS → VM GPU lip-sync → WebRTC) so the avatar's lips
+ *  line up with the locally played voice. Tune per session via `?audioDelay=<ms>`
+ *  (e.g. ?audioDelay=350); 0 disables the offset (legacy immediate playback). */
+const DEFAULT_AUDIO_DELAY_MS = 250;
+
+/** Read the per-session TTS playback delay (seconds) from `?audioDelay=<ms>`,
+ *  defaulting to {@link DEFAULT_AUDIO_DELAY_MS}. Clamped to [0, 2000] ms. */
+function readAudioDelaySec(): number {
+  try {
+    const raw = new URLSearchParams(location.search).get('audioDelay');
+    const ms = raw == null ? DEFAULT_AUDIO_DELAY_MS : Number(raw);
+    if (!Number.isFinite(ms)) return DEFAULT_AUDIO_DELAY_MS / 1000;
+    return Math.min(2000, Math.max(0, ms)) / 1000;
+  } catch {
+    return DEFAULT_AUDIO_DELAY_MS / 1000;
+  }
+}
+
+/** 方案1 (autoproject DH_AUDIO_VIA_VM parity): when `?webrtcAudio=1`, play the
+ *  VM's avatar audio track that arrives muxed+frame-synced over the MuseTalk
+ *  WebRTC stream, instead of the locally-played ai_audio (which needs the
+ *  open-loop audioDelay guess). Eliminates the 250ms offset and the "audio not
+ *  gated on video" desync — server-side A/V sync like autoproject's ByteRTC
+ *  path. Default off (legacy local-TTS path) until validated. */
+function readWebRtcAudioEnabled(): boolean {
+  try {
+    return new URLSearchParams(location.search).get('webrtcAudio') === '1';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Common surface both viewers expose so the controller can hold either one
+ * and tear it down uniformly regardless of provider.
+ */
+type DHViewer = {
+  leave(): Promise<void>;
+  destroy(): void;
+  play(userId?: string): void | Promise<void>;
+};
+
 export class DHSessionController {
   private ws: DHWebSocket | null = null;
-  rtcViewer: ByteRTCViewer | null = null;
+  rtcViewer: DHViewer | null = null;
   recorder: AudioRecorder | null = null;
+  /**
+   * True once a MuseTalk (WebRTC-direct) stream is negotiated. In 道B the VM
+   * is a pure renderer: winclaw runs Qwen (ASR+LLM+TTS) itself, so the STT
+   * recorder MUST keep running (mic → ws.sendAudio → winclaw Qwen) and the
+   * winclaw TTS MUST be played locally via the AudioStreamPlayer (the VM
+   * returns video only over WebRTC, no audio track).
+   */
+  private museTalkMode = false;
   private player: AudioStreamPlayer | null = null;
   private callbacks: DHSessionCallbacks;
   private unmuteTimer: ReturnType<typeof setTimeout> | null = null;
@@ -80,17 +133,27 @@ export class DHSessionController {
 
     this.callbacks.onConnectionStatusChange('connecting');
 
-    // Build WebSocket URL.  `location.hostname` is correct for both localhost
-    // and remote-desktop scenarios because the gateway and DH server run on
-    // the same host as the browser's URL.
-    const wsUrl = `ws://${location.hostname}:${wsPort}/api/dh/connect/${gatewayToken}`;
+    // Build WebSocket URL.
+    // - HTTP (localhost / direct-port / dev): connect directly to the standalone
+    //   DH WebSocket server at `ws://host:wsPort` (legacy behavior; mic is allowed
+    //   because http://localhost is a secure context, and ws:// is fine on an http page).
+    // - HTTPS (behind a TLS reverse proxy, e.g. caddy on a public VM): the page is a
+    //   secure context (mic works) but a plain `ws://` would be blocked as mixed content.
+    //   Connect **same-origin** over `wss://${location.host}/api/dh/connect/...` and let the
+    //   reverse proxy route `/api/dh/connect` → the internal DH WS server (18790). This
+    //   avoids a second TLS port and the mixed-content block. (winclaw-avatar 道B / ai-meta)
+    const isHttps = location.protocol === 'https:';
+    const wsUrl = isHttps
+      ? `wss://${location.host}/api/dh/connect/${gatewayToken}`
+      : `ws://${location.hostname}:${wsPort}/api/dh/connect/${gatewayToken}`;
 
     this.ws = new DHWebSocket(this.buildMessageHandlers());
     this.ws.connect(wsUrl);
 
     // Create the audio player immediately; it will only actually decode/play
-    // once the first audio chunk arrives.
-    this.player = new AudioStreamPlayer();
+    // once the first audio chunk arrives. The playback delay compensates the
+    // MuseTalk video pipeline latency so the lips line up with the voice.
+    this.player = new AudioStreamPlayer(24000, readAudioDelaySec());
 
     // Start the microphone recorder.  Audio chunks are forwarded to the
     // WebSocket as soon as the connection opens.
@@ -119,6 +182,9 @@ export class DHSessionController {
       clearTimeout(this.unmuteTimer);
       this.unmuteTimer = null;
     }
+
+    // Reset provider mode for the next session.
+    this.museTalkMode = false;
 
     // 1. Stop the microphone recorder and camera.
     if (this.recorder) {
@@ -162,6 +228,7 @@ export class DHSessionController {
 
   private cameraStream: MediaStream | null = null;
   private cameraEnabled = false;
+  private videoCapture: VideoCapture | null = null;
 
   /**
    * Toggle the camera PiP preview and video frame capture.
@@ -179,40 +246,63 @@ export class DHSessionController {
 
   private async startCamera(): Promise<void> {
     try {
-      this.cameraStream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
-        audio: false,
-      });
-      // Poll for the DOM element (Lit may need a few frames to render it)
+      // Poll for the preview DOM element (Lit may need a few frames to render it)
       let preview: HTMLVideoElement | null = null;
       for (let i = 0; i < 20; i++) {
         await new Promise((r) => setTimeout(r, 50));
         preview = document.getElementById('camera-preview') as HTMLVideoElement | null;
         if (preview) break;
       }
-      if (preview) {
-        preview.srcObject = this.cameraStream;
-        console.log('[DHSessionController] Camera started');
-      } else {
+      if (!preview) {
         console.warn('[DHSessionController] #camera-preview not found after 1s');
       }
+
+      this.videoCapture = new VideoCapture();
+      let frameCount = 0;
+      this.cameraStream = await this.videoCapture.start(
+        (base64Jpeg: string) => {
+          frameCount++;
+          // Log every 10th frame to confirm capture + send, avoid console spam
+          if (frameCount === 1 || frameCount % 10 === 0) {
+            console.log(
+              `[DHSessionController] 📹 captured frame #${frameCount} (base64 len=${base64Jpeg.length}); ws.connected=${this.ws?.isConnected}`,
+            );
+          }
+          try {
+            this.ws?.sendVideo(base64Jpeg);
+          } catch (err) {
+            console.warn('[DHSessionController] sendVideo failed:', err);
+          }
+        },
+        preview
+      );
+      console.log('[DHSessionController] Camera started — VideoCapture is now emitting frames');
     } catch (err) {
-      console.error('[DHSessionController] Camera access denied:', err);
+      console.error('[DHSessionController] Camera access denied or capture failed:', err);
       this.cameraEnabled = false;
       this.cameraStream = null;
+      if (this.videoCapture) {
+        try { this.videoCapture.stop(); } catch {}
+        this.videoCapture = null;
+      }
     }
   }
 
   private stopCamera(): void {
-    if (this.cameraStream) {
-      this.cameraStream.getTracks().forEach((t) => t.stop());
-      this.cameraStream = null;
+    const hadCamera = !!this.videoCapture || !!this.cameraStream;
+    if (this.videoCapture) {
+      try { this.videoCapture.stop(); } catch {}
+      this.videoCapture = null;
     }
+    // VideoCapture.stop() already stops the MediaStream tracks; null out our ref.
+    this.cameraStream = null;
     const preview = document.getElementById('camera-preview') as HTMLVideoElement | null;
     if (preview) {
       preview.srcObject = null;
     }
-    console.log('[DHSessionController] Camera stopped');
+    if (hadCamera) {
+      console.log('[DHSessionController] Camera stopped');
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -236,10 +326,17 @@ export class DHSessionController {
       },
 
       onAiAudio: (base64Audio: string, sampleRate: number) => {
-        // Only play via AudioStreamPlayer when ByteRTC is NOT connected.
-        // When the RTC viewer is active, audio comes through the RTC stream
-        // and playing it again here would cause double/overlapping audio.
-        if (!this.rtcViewer) {
+        // Playback policy depends on the provider:
+        //   • byteplus: audio comes through the ByteRTC stream, so playing it
+        //     again here would cause double/overlapping audio — skip while a
+        //     viewer is present.
+        //   • musetalk (道B): winclaw owns the TTS. By default the VM is treated
+        //     as a video-only renderer, so we play winclaw TTS locally.
+        //     EXCEPT when `?webrtcAudio=1` (方案1): the VM's avatar audio comes
+        //     muxed+synced over the MuseTalk WebRTC stream, so playing it again
+        //     here would double the audio — skip the local player.
+        const skipLocalForWebRtcAudio = this.museTalkMode && readWebRtcAudioEnabled();
+        if ((this.museTalkMode || !this.rtcViewer) && !skipLocalForWebRtcAudio) {
           this.player?.playChunk(base64Audio, sampleRate);
         }
       },
@@ -252,6 +349,20 @@ export class DHSessionController {
         // Reset the audio player cursor so the first incoming chunk starts
         // immediately rather than after the tail of the previous response.
         this.player?.resume();
+      },
+
+      onAiSpeechInterrupted: () => {
+        // Barge-in: the backend interrupted the VM's lip-sync queue because the
+        // user spoke over the avatar. Drop the locally-buffered/scheduled TTS so
+        // the old turn stops immediately instead of playing over the new turn.
+        this.player?.flush();
+        // Cancel a pending unmute — the mic is already (or about to be) live for
+        // the user's interruption; onAiResponseStarted will re-mute for the
+        // avatar's next turn.
+        if (this.unmuteTimer !== null) {
+          clearTimeout(this.unmuteTimer);
+          this.unmuteTimer = null;
+        }
       },
 
       onAiResponseDone: () => {
@@ -299,7 +410,90 @@ export class DHSessionController {
       this.rtcViewer = null;
     }
 
-    this.rtcViewer = new ByteRTCViewer(info.rtcAppId, VIDEO_RENDER_DOM_ID, {
+    if (info.provider === 'musetalk') {
+      this.initMuseTalkViewer(info);
+    } else {
+      this.initByteRtcViewer(info);
+    }
+  }
+
+  /**
+   * MuseTalk (dh-saas / WebRTC-direct) viewer. In 道B the VM is a pure
+   * MuseTalk renderer: winclaw owns the brain (Qwen ASR+LLM+TTS). The winclaw
+   * STT recorder started in start() MUST keep running (mic → ws.sendAudio →
+   * winclaw Qwen), and winclaw TTS is played locally by the AudioStreamPlayer
+   * (onAiAudio plays in MuseTalk mode); the VM returns video only.
+   */
+  private initMuseTalkViewer(
+    info: Extract<DHStreamInfo, { provider: 'musetalk' }>,
+  ): void {
+    this.museTalkMode = true;
+
+    // Do NOT stop the winclaw STT recorder here. In 道B the mic must flow
+    // browser → ws.sendAudio → winclaw Qwen (NOT into the VM peer connection),
+    // so the AudioRecorder started in start() stays alive. Echo is suppressed
+    // by onAiResponseStarted/Done muting the mic during AI speech.
+
+    const viewer = new MuseTalkWebRTCViewer(VIDEO_RENDER_DOM_ID, {
+      onStreamReady: () => {
+        console.log('[DHSessionController] MuseTalk WebRTC stream ready');
+      },
+      onAutoplayFailed: (userId, kind) => {
+        console.warn(
+          `[DHSessionController] MuseTalk autoplay failed for userId=${userId}, kind=${kind}`,
+        );
+      },
+      onError: (err) => {
+        console.error('[DHSessionController] MuseTalk error:', err);
+        this.callbacks.onErrorMessage(
+          err instanceof Error ? err.message : 'MuseTalk error',
+        );
+      },
+    });
+    this.rtcViewer = viewer;
+
+    // Proxy the SDP offer through the existing DH WebSocket (server-to-server,
+    // no CORS) instead of POSTing directly to the dh-saas VM, which sends no
+    // Access-Control-Allow-Origin header and so fails the browser preflight.
+    const exchangeOffer = (sdp: string, webrtcId: string) =>
+      new Promise<string>((resolve, reject) => {
+        const ws = this.ws;
+        if (!ws) {
+          reject(new Error('DH WebSocket not available for offer exchange'));
+          return;
+        }
+        const timer = setTimeout(
+          () => reject(new Error('musetalk offer proxy timeout')),
+          20000,
+        );
+        ws.onMuseTalkAnswer = (ans) => {
+          clearTimeout(timer);
+          if (ans.error) reject(new Error(ans.error));
+          else if (ans.sdp) resolve(ans.sdp);
+          else reject(new Error('empty answer'));
+        };
+        ws.sendMuseTalkOffer(sdp, webrtcId);
+      });
+
+    viewer
+      .join({
+        exchangeOffer,
+        sessionId: info.sessionId,
+        iceServers: info.iceServers,
+      })
+      .catch((err: unknown) => {
+        console.error('[DHSessionController] MuseTalk join failed:', err);
+        this.callbacks.onErrorMessage(
+          err instanceof Error ? err.message : 'MuseTalk join failed',
+        );
+      });
+  }
+
+  /** Legacy BytePlus (ByteRTC) viewer — unchanged rollback path. */
+  private initByteRtcViewer(
+    info: Extract<DHStreamInfo, { provider?: 'byteplus' }>,
+  ): void {
+    const viewer = new ByteRTCViewer(info.rtcAppId, VIDEO_RENDER_DOM_ID, {
       onStreamReady: () => {
         console.log('[DHSessionController] ByteRTC stream ready');
       },
@@ -315,9 +509,10 @@ export class DHSessionController {
         );
       },
     });
+    this.rtcViewer = viewer;
 
     // Join as viewer-only (no publish).
-    this.rtcViewer
+    viewer
       .join(info.viewerToken, info.roomId, info.viewerUid)
       .catch((err: unknown) => {
         console.error('[DHSessionController] ByteRTC join failed:', err);

@@ -294,7 +294,15 @@ interface SessionUpdatePayload {
   output_audio_format?: string;
   input_audio_transcription?: { model: string };
   turn_detection?:
-    | { type: string; interrupt_response?: boolean; create_response?: boolean }
+    | {
+        type: string;
+        interrupt_response?: boolean;
+        create_response?: boolean;
+        /** ms of trailing silence before end-of-turn (server_vad). Lower = snappier. */
+        silence_duration_ms?: number;
+        /** ms of audio kept before detected speech start (server_vad). */
+        prefix_padding_ms?: number;
+      }
     | null;
   instructions?: string;
   tools?: QwenToolDefinition[];
@@ -458,7 +466,12 @@ export class QwenRealtimeClient extends EventEmitter {
     super();
 
     this._apiKey = config.apiKey;
-    this._model = config.model ?? "qwen3.5-omni-flash-realtime";
+    // DH voice model. Env override (WINCLAW_DH_MODEL) lets us switch without a
+    // rebuild — e.g. qwen3-omni-flash-realtime (3.0) which is faster and more
+    // stable than 3.5-flash-realtime (3.5 showed higher TTFT + recurring 50002
+    // ModelServingError on this account; autoproject uses 3.0).
+    this._model =
+      process.env.WINCLAW_DH_MODEL || config.model || "qwen3.5-omni-flash-realtime";
     this._voice = config.voice ?? DEFAULT_VOICE;
     this._voiceModel = config.voiceModel ?? "gummy-realtime-v1";
     this._serverVad = config.serverVad ?? true;
@@ -529,8 +542,17 @@ export class QwenRealtimeClient extends EventEmitter {
   sendAudio(pcm: Buffer): boolean {
     if (!this._isConnected || !this._ws) return false;
 
-    // Anti-echo: silently discard mic audio while the AI is responding.
-    if (this._isResponding) return true;
+    // Anti-echo policy: by DEFAULT always forward mic audio (autoproject parity).
+    // The browser's getUserMedia echoCancellation (audio-recorder.ts) cancels the
+    // avatar's speaker echo at the source, and qwen server VAD (interrupt_response)
+    // handles barge-in. The legacy client-side discard dropped the user's speech
+    // whenever _isResponding was true — incl. when response.done arrived late over
+    // the lossy L20→dashscope link — which made the avatar "completely not hear"
+    // the user (6-8s of speech → only 5-10 transcribed chars). Re-enable the old
+    // discard only if external echo proves problematic: WINCLAW_DH_ANTIECHO_DISCARD=1.
+    if (this._isResponding && process.env.WINCLAW_DH_ANTIECHO_DISCARD === "1") {
+      return true;
+    }
 
     try {
       this._sendMessage({
@@ -826,13 +848,23 @@ export class QwenRealtimeClient extends EventEmitter {
    */
   private _openWebSocket(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const wsUrl = `wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=${encodeURIComponent(this._model)}`;
+      // Endpoint host is env-tunable so we can point at the faster dashscope-intl
+      // (Singapore) PoP from the HK VM when an international key is available
+      // (mainland dashscope.aliyuncs.com measured ~373ms connect / 25% loss from
+      // L20; intl ~82ms). Default keeps the mainland endpoint.
+      const dashscopeHost =
+        process.env.WINCLAW_DH_DASHSCOPE_HOST || "dashscope.aliyuncs.com";
+      const wsUrl = `wss://${dashscopeHost}/api-ws/v1/realtime?model=${encodeURIComponent(this._model)}`;
       // NOTE: the `ws` client does NOT support a `pingInterval` ClientOption
       // (that option only exists on `ws.Server`). Keep-alive pings are driven
       // manually via `_startPingLoop()` once the socket is open.
+      // perMessageDeflate:false — disable WS compression so small append/JSON
+      // frames aren't buffered for the deflate window (latency + CPU on the
+      // realtime audio stream).
       const ws = new WebSocket(
         wsUrl,
         {
+          perMessageDeflate: false,
           headers: {
             Authorization: `Bearer ${this._apiKey}`,
           },
@@ -843,6 +875,19 @@ export class QwenRealtimeClient extends EventEmitter {
       let settled = false;
 
       ws.once("open", () => {
+        // ★ Disable Nagle on the underlying TCP socket. The official dashscope
+        //   SDK sends realtime frames with TCP_NODELAY; this hand-rolled `ws`
+        //   client did not, so small audio-append frames (and the tail packet
+        //   that triggers server VAD) were coalesced and delayed by up to a full
+        //   RTT. Invisible on low-RTT links but adds hundreds of ms on the L20→
+        //   mainland-dashscope path (~373ms RTT) — the main reason winclaw felt
+        //   slow while autoproject (SDK, NODELAY) was fast everywhere.
+        try {
+          (ws as unknown as { _socket?: { setNoDelay?: (v: boolean) => void } })
+            ._socket?.setNoDelay?.(true);
+        } catch {
+          // best-effort; not all ws versions expose _socket synchronously
+        }
         if (!settled) {
           settled = true;
           resolve();
@@ -1188,7 +1233,17 @@ export class QwenRealtimeClient extends EventEmitter {
       output_audio_format: this._outputAudioFormat,
       input_audio_transcription: { model: this._voiceModel },
       turn_detection: this._serverVad
-        ? { type: "server_vad", interrupt_response: true, create_response: true }
+        ? {
+            type: "server_vad",
+            interrupt_response: true,
+            create_response: true,
+            // ★ Faster end-of-turn: only ~600ms trailing silence before the model
+            //   decides the user is done. dashscope's default is much longer (~1.7s
+            //   observed), felt as "说完后停顿好几秒". Tunable — raise if it cuts the
+            //   user off during natural mid-utterance pauses.
+            silence_duration_ms: Number(process.env.WINCLAW_DH_VAD_MS) || 600,
+            prefix_padding_ms: 300,
+          }
         : null,
       instructions: this._currentInstructions || undefined,
       // NOTE: enable_search is only supported by qwen3.5-omni-plus-realtime,

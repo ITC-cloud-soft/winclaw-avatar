@@ -103,6 +103,25 @@
     "session.maxConcurrent": {
       "label": "Max Concurrent Sessions",
       "advanced": true
+    },
+    "dh.provider": {
+      "label": "Avatar Provider",
+      "help": "musetalk = dh-saas WebRTC avatar (Qwen pipeline bypassed); byteplus = ByteDance virtual human (rollback)."
+    },
+    "dh.musetalk.dhsaasUrl": {
+      "label": "dh-saas Base URL"
+    },
+    "dh.musetalk.tenantToken": {
+      "label": "dh-saas Tenant Token",
+      "sensitive": true
+    },
+    "dh.musetalk.defaultRoleId": {
+      "label": "Default Role ID"
+    },
+    "dh.musetalk.systemPrompt": {
+      "label": "System Prompt (deprecated)",
+      "help": "DEPRECATED (道B): ignored. winclaw now owns the dialogue prompt — the VM is a pure MuseTalk renderer with no LLM. Set persona/language via the workspace identity files (SOUL/IDENTITY/USER/AGENTS). Retained for backward-compat only.",
+      "advanced": true
     }
   },
   "configSchema": {
@@ -186,6 +205,25 @@
         "properties": {
           "earlyTimeoutMs": { "type": "integer", "default": 15000, "minimum": 1000, "maximum": 120000, "description": "Return {receipt, user_message:'確認中'} to Qwen after this deadline. Agent keeps running in background." },
           "lateTimeoutMs":  { "type": "integer", "default": 600000, "minimum": 30000, "maximum": 1800000, "description": "How long after earlyTimeoutMs to keep waiting for the real agent reply before abandoning." }
+        }
+      },
+      "dh": {
+        "type": "object",
+        "description": "Avatar provider selection. musetalk = dh-saas WebRTC renderer (道B: winclaw runs the Qwen brain and pushes TTS PCM to the VM; the VM only renders lip-sync video); byteplus = existing ByteDance pipeline (rollback). dhMode applies to both providers.",
+        "additionalProperties": false,
+        "properties": {
+          "provider": { "type": "string", "default": "musetalk", "enum": ["musetalk", "byteplus"], "description": "Avatar stream provider." },
+          "musetalk": {
+            "type": "object",
+            "description": "dh-saas MuseTalk connection settings.",
+            "additionalProperties": false,
+            "properties": {
+              "dhsaasUrl":     { "type": "string", "default": "https://localhost:8443", "description": "Base URL of the dh-saas session API." },
+              "tenantToken":   { "type": "string", "default": "", "description": "Tenant bearer token for Authorization: Bearer." },
+              "defaultRoleId": { "type": "string", "default": "role_default_system", "description": "Fallback role_id for sessions." },
+              "systemPrompt":  { "type": "string", "default": "", "description": "DEPRECATED (道B): ignored — winclaw owns the dialogue prompt and the VM is a pure MuseTalk renderer. Retained for backward-compat only; set persona/language via the workspace identity files (SOUL/IDENTITY/USER/AGENTS)." }
+            }
+          }
         }
       }
     },

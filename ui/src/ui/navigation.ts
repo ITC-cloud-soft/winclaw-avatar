@@ -1,4 +1,5 @@
 import type { IconName } from "./icons.js";
+import { t } from "../i18n/index.js";
 
 export const TAB_GROUPS = [
   { label: "Chat", tabs: ["chat"] },
@@ -187,7 +188,7 @@ export function titleForTab(tab: Tab) {
     case "chat":
       return "Chat";
     case "personal":
-      return "個人情報";
+      return t("commands.personalInfo");
     case "config":
       return "Config";
     case "debug":
@@ -213,127 +214,140 @@ export type CommandDefinition = {
   keywords: string[];
 };
 
-export const COMMAND_CATEGORIES = ["チャット", "接続・サービス", "システム"] as const;
+export function getCommandCategories(): [string, string, string] {
+  return [t("commands.chat"), t("commands.services"), t("commands.system")];
+}
 
-export const COMMANDS: CommandDefinition[] = [
-  // チャット
-  {
-    id: "new-chat",
-    label: "新しい会話",
-    category: "チャット",
-    icon: "messageSquare",
-    shortcut: "Ctrl+N",
-    keywords: ["new", "chat", "会話", "新規"],
-  },
-  {
-    id: "history",
-    label: "会話履歴",
-    category: "チャット",
-    icon: "fileText",
-    tab: "sessions",
-    shortcut: "Ctrl+H",
-    keywords: ["history", "履歴", "sessions"],
-  },
-  // 接続・サービス
-  {
-    id: "channels",
-    label: "チャネル管理",
-    category: "接続・サービス",
-    icon: "link",
-    tab: "channels",
-    keywords: ["channels", "チャネル", "slack", "discord", "telegram"],
-  },
-  {
-    id: "agents",
-    label: "エージェント設定",
-    category: "接続・サービス",
-    icon: "folder",
-    tab: "agents",
-    keywords: ["agents", "エージェント"],
-  },
-  {
-    id: "cron",
-    label: "スケジュール管理",
-    category: "接続・サービス",
-    icon: "loader",
-    tab: "cron",
-    keywords: ["cron", "schedule", "スケジュール"],
-  },
-  // システム
-  {
-    id: "personal",
-    label: "個人情報",
-    category: "システム",
-    icon: "user",
-    tab: "personal",
-    keywords: ["personal", "個人情報", "従業員", "employee", "profile"],
-  },
-  {
-    id: "settings",
-    label: "設定",
-    category: "システム",
-    icon: "settings",
-    tab: "config",
-    shortcut: "Ctrl+,",
-    keywords: ["config", "設定", "settings"],
-  },
-  {
-    id: "overview",
-    label: "ダッシュボード",
-    category: "システム",
-    icon: "barChart",
-    tab: "overview",
-    keywords: ["overview", "ダッシュボード", "dashboard"],
-  },
-  {
-    id: "usage",
-    label: "使用量を確認",
-    category: "システム",
-    icon: "barChart",
-    tab: "usage",
-    keywords: ["usage", "使用量", "cost", "コスト"],
-  },
-  {
-    id: "skills",
-    label: "スキル管理",
-    category: "システム",
-    icon: "zap",
-    tab: "skills",
-    keywords: ["skills", "スキル"],
-  },
-  {
-    id: "logs",
-    label: "ログ表示",
-    category: "システム",
-    icon: "scrollText",
-    tab: "logs",
-    keywords: ["logs", "ログ"],
-  },
-  {
-    id: "debug",
-    label: "デバッグ",
-    category: "システム",
-    icon: "bug",
-    tab: "debug",
-    keywords: ["debug", "デバッグ"],
-  },
-  {
-    id: "nodes",
-    label: "ノード管理",
-    category: "システム",
-    icon: "monitor",
-    tab: "nodes",
-    keywords: ["nodes", "ノード"],
-  },
-  {
-    id: "instances",
-    label: "インスタンス",
-    category: "システム",
-    icon: "radio",
-    tab: "instances",
-    keywords: ["instances", "インスタンス"],
-  },
-];
+/** @deprecated Use getCommandCategories() for translated output. */
+export const COMMAND_CATEGORIES = ["chat", "services", "system"] as const;
+
+export function getCommands(): CommandDefinition[] {
+  const chat = t("commands.chat");
+  const services = t("commands.services");
+  const system = t("commands.system");
+  return [
+    // Chat
+    {
+      id: "new-chat",
+      label: t("commands.newConversation"),
+      category: chat,
+      icon: "messageSquare",
+      shortcut: "Ctrl+N",
+      keywords: ["new", "chat", "会話", "新規"],
+    },
+    {
+      id: "history",
+      label: t("commands.conversationHistory"),
+      category: chat,
+      icon: "fileText",
+      tab: "sessions",
+      shortcut: "Ctrl+H",
+      keywords: ["history", "履歴", "sessions"],
+    },
+    // Connections & Services
+    {
+      id: "channels",
+      label: t("commands.channelManagement"),
+      category: services,
+      icon: "link",
+      tab: "channels",
+      keywords: ["channels", "チャネル", "slack", "discord", "telegram"],
+    },
+    {
+      id: "agents",
+      label: t("commands.agentSettings"),
+      category: services,
+      icon: "folder",
+      tab: "agents",
+      keywords: ["agents", "エージェント"],
+    },
+    {
+      id: "cron",
+      label: t("commands.scheduleManagement"),
+      category: services,
+      icon: "loader",
+      tab: "cron",
+      keywords: ["cron", "schedule", "スケジュール"],
+    },
+    // System
+    {
+      id: "personal",
+      label: t("commands.personalInfo"),
+      category: system,
+      icon: "user",
+      tab: "personal",
+      keywords: ["personal", "個人情報", "従業員", "employee", "profile"],
+    },
+    {
+      id: "settings",
+      label: t("commands.settings"),
+      category: system,
+      icon: "settings",
+      tab: "config",
+      shortcut: "Ctrl+,",
+      keywords: ["config", "設定", "settings"],
+    },
+    {
+      id: "overview",
+      label: t("commands.dashboard"),
+      category: system,
+      icon: "barChart",
+      tab: "overview",
+      keywords: ["overview", "ダッシュボード", "dashboard"],
+    },
+    {
+      id: "usage",
+      label: t("commands.checkUsage"),
+      category: system,
+      icon: "barChart",
+      tab: "usage",
+      keywords: ["usage", "使用量", "cost", "コスト"],
+    },
+    {
+      id: "skills",
+      label: t("commands.skillManagement"),
+      category: system,
+      icon: "zap",
+      tab: "skills",
+      keywords: ["skills", "スキル"],
+    },
+    {
+      id: "logs",
+      label: t("commands.showLogs"),
+      category: system,
+      icon: "scrollText",
+      tab: "logs",
+      keywords: ["logs", "ログ"],
+    },
+    {
+      id: "debug",
+      label: t("commands.debug"),
+      category: system,
+      icon: "bug",
+      tab: "debug",
+      keywords: ["debug", "デバッグ"],
+    },
+    {
+      id: "nodes",
+      label: t("commands.nodeManagement"),
+      category: system,
+      icon: "monitor",
+      tab: "nodes",
+      keywords: ["nodes", "ノード"],
+    },
+    {
+      id: "instances",
+      label: t("commands.instances"),
+      category: system,
+      icon: "radio",
+      tab: "instances",
+      keywords: ["instances", "インスタンス"],
+    },
+  ];
+}
+
+/** @deprecated Use getCommands() for translated output. */
+export const COMMANDS: CommandDefinition[] = [];
 
 export function subtitleForTab(tab: Tab) {
   switch (tab) {
@@ -358,7 +372,7 @@ export function subtitleForTab(tab: Tab) {
     case "chat":
       return "Direct gateway chat session for quick interventions.";
     case "personal":
-      return "従業員ID・氏名・メールアドレスを管理します。";
+      return t("personal.subtitle");
     case "config":
       return "Edit ~/.winclaw/winclaw.json (WinClaw config) safely.";
     case "debug":

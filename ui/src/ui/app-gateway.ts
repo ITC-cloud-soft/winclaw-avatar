@@ -152,6 +152,8 @@ export function connectGateway(host: GatewayHost) {
       void loadDevices(host as unknown as WinClawApp, { quiet: true });
       void loadChannels(host as unknown as WinClawApp, false);
       void refreshActiveTab(host as unknown as Parameters<typeof refreshActiveTab>[0]);
+      // Probe DH plugin availability
+      probeDhAvailability(host);
     },
     onClose: ({ code, reason }) => {
       host.connected = false;
@@ -260,6 +262,19 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
       host.execApprovalQueue = removeExecApproval(host.execApprovalQueue, resolved.id);
     }
   }
+}
+
+function probeDhAvailability(host: GatewayHost) {
+  const token = (host as unknown as { settings: { token?: string } }).settings?.token ?? "";
+  fetch("/api/dh/health", {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+    .then((res) => {
+      (host as unknown as WinClawApp).dhAvailable = res.ok;
+    })
+    .catch(() => {
+      (host as unknown as WinClawApp).dhAvailable = false;
+    });
 }
 
 export function applySnapshot(host: GatewayHost, hello: GatewayHelloOk) {

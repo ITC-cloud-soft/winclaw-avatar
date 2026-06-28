@@ -163,22 +163,35 @@ function renderTopbarV3(state: MainLayoutState) {
 }
 
 /**
+ * Toggle browser fullscreen for a given panel element.
+ */
+async function toggleBrowserFullscreen(panelSelector: string) {
+  if (document.fullscreenElement) {
+    await document.exitFullscreen();
+  } else {
+    const panel = document.querySelector(panelSelector) as HTMLElement | null;
+    if (panel) {
+      await panel.requestFullscreen();
+    }
+  }
+}
+
+/**
  * Fullscreen toggle button for the DH panel.
  * Shown in the top-right corner of the panel when hovering or focused.
  */
-function renderDHFullscreenToggle(state: MainLayoutState) {
-  const isDHFull = state.layoutMode === "dh-fullscreen";
-  const label = t(isDHFull ? "layout.exitFullscreen" : "layout.dhFullscreen");
+function renderDHFullscreenToggle(_state: MainLayoutState) {
+  const isFullscreen = !!document.fullscreenElement;
+  const label = t(isFullscreen ? "layout.exitFullscreen" : "layout.dhFullscreen");
 
   return html`
     <button
       class="panel-fullscreen-btn"
-      @click=${() =>
-        state.onSetLayoutMode(isDHFull ? "split" : "dh-fullscreen")}
+      @click=${() => toggleBrowserFullscreen(".panel-dh")}
       title=${label}
       aria-label=${label}
     >
-      ${isDHFull ? iconCompress() : iconExpand()}
+      ${isFullscreen ? iconCompress() : iconExpand()}
     </button>
   `;
 }
@@ -186,19 +199,18 @@ function renderDHFullscreenToggle(state: MainLayoutState) {
 /**
  * Fullscreen toggle button for the chat panel.
  */
-function renderChatFullscreenToggle(state: MainLayoutState) {
-  const isChatFull = state.layoutMode === "chat-fullscreen";
-  const label = t(isChatFull ? "layout.exitFullscreen" : "layout.chatFullscreen");
+function renderChatFullscreenToggle(_state: MainLayoutState) {
+  const isFullscreen = !!document.fullscreenElement;
+  const label = t(isFullscreen ? "layout.exitFullscreen" : "layout.chatFullscreen");
 
   return html`
     <button
       class="panel-fullscreen-btn"
-      @click=${() =>
-        state.onSetLayoutMode(isChatFull ? "split" : "chat-fullscreen")}
+      @click=${() => toggleBrowserFullscreen(".panel-chat")}
       title=${label}
       aria-label=${label}
     >
-      ${isChatFull ? iconCompress() : iconExpand()}
+      ${isFullscreen ? iconCompress() : iconExpand()}
     </button>
   `;
 }
@@ -232,13 +244,9 @@ export function renderMainLayout(state: MainLayoutState) {
           class="panel-dh"
           aria-label=${t("dh.panelLabel")}
           @dblclick=${(e: MouseEvent) => {
-            // Double-click anywhere in the DH panel (outside the video — that
-            // has its own dblclick on the <video> element) also triggers fullscreen
             const target = e.target as HTMLElement;
             if (!target.closest("video")) {
-              state.onSetLayoutMode(
-                state.layoutMode === "dh-fullscreen" ? "split" : "dh-fullscreen",
-              );
+              toggleBrowserFullscreen(".panel-dh");
             }
           }}
         >

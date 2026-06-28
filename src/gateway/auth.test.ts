@@ -313,16 +313,16 @@ describe("gateway auth", () => {
     const limiter = await expectTokenMismatchWithLimiter({
       reqHeaders: { "x-forwarded-for": "203.0.113.10" },
     });
-    expect(limiter.check).toHaveBeenCalledWith("203.0.113.10", "shared-secret");
-    expect(limiter.recordFailure).toHaveBeenCalledWith("203.0.113.10", "shared-secret");
+    expect(limiter.check).toHaveBeenCalledWith("203.0.113.10", expect.stringMatching(/^shared-secret#[0-9a-f]{12}$/));
+    expect(limiter.recordFailure).toHaveBeenCalledWith("203.0.113.10", expect.stringMatching(/^shared-secret#[0-9a-f]{12}$/));
   });
 
   it("ignores X-Real-IP fallback by default for rate-limit checks", async () => {
     const limiter = await expectTokenMismatchWithLimiter({
       reqHeaders: { "x-real-ip": "203.0.113.77" },
     });
-    expect(limiter.check).toHaveBeenCalledWith("127.0.0.1", "shared-secret");
-    expect(limiter.recordFailure).toHaveBeenCalledWith("127.0.0.1", "shared-secret");
+    expect(limiter.check).toHaveBeenCalledWith("127.0.0.1", expect.stringMatching(/^shared-secret#[0-9a-f]{12}$/));
+    expect(limiter.recordFailure).toHaveBeenCalledWith("127.0.0.1", expect.stringMatching(/^shared-secret#[0-9a-f]{12}$/));
   });
 
   it("uses X-Real-IP when fallback is explicitly enabled", async () => {
@@ -330,8 +330,8 @@ describe("gateway auth", () => {
       reqHeaders: { "x-real-ip": "203.0.113.77" },
       allowRealIpFallback: true,
     });
-    expect(limiter.check).toHaveBeenCalledWith("203.0.113.77", "shared-secret");
-    expect(limiter.recordFailure).toHaveBeenCalledWith("203.0.113.77", "shared-secret");
+    expect(limiter.check).toHaveBeenCalledWith("203.0.113.77", expect.stringMatching(/^shared-secret#[0-9a-f]{12}$/));
+    expect(limiter.recordFailure).toHaveBeenCalledWith("203.0.113.77", expect.stringMatching(/^shared-secret#[0-9a-f]{12}$/));
   });
 
   it("passes custom rate-limit scope to limiter operations", async () => {
@@ -345,8 +345,8 @@ describe("gateway auth", () => {
 
     expect(res.ok).toBe(false);
     expect(res.reason).toBe("password_mismatch");
-    expect(limiter.check).toHaveBeenCalledWith(undefined, "custom-scope");
-    expect(limiter.recordFailure).toHaveBeenCalledWith(undefined, "custom-scope");
+    expect(limiter.check).toHaveBeenCalledWith(undefined, expect.stringMatching(/^custom-scope#[0-9a-f]{12}$/));
+    expect(limiter.recordFailure).toHaveBeenCalledWith(undefined, expect.stringMatching(/^custom-scope#[0-9a-f]{12}$/));
   });
 });
 

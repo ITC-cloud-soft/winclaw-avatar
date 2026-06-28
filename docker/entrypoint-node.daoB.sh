@@ -96,15 +96,6 @@ CONFIG_JSON=$(jq -n \
   --arg gw_token "${GW_TOKEN}" \
   --arg ws_path "${WS_HOST_PATH}" \
   '{
-    codingEngine: "metacoder",
-    agents: {
-      defaults: {
-        model: "anthropic/glm-5.2"
-      },
-      list: [
-        { id: "main" }
-      ]
-    },
     gateway: {
       mode: "local",
       bind: $gw_bind,
@@ -146,11 +137,10 @@ if [ -f "${PERSIST_DIR}/winclaw.json" ]; then
   # IMPORTANT: grc section must ALWAYS come from .[0] (env vars) to preserve employee info
   # "models" is the correct WinClaw config key for LLM provider settings (not "providers")
   MERGED_JSON=$(jq -s '
-    .[0] + {
-      models: (.[1].models // {}),
-      tools: (.[1].tools // .[0].tools),
+    .[1] + {
       gateway: (.[0].gateway),
-      grc: (.[0].grc)
+      grc: (.[0].grc),
+      tools: (.[0].tools)
     }
   ' <(echo "${CONFIG_JSON}") "${PERSIST_DIR}/winclaw.json" 2>/dev/null) || true
 

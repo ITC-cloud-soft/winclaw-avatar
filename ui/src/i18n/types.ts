@@ -185,4 +185,80 @@ export interface LocaleMessages {
     /** Current model name prefix in the status bar */
     model: string;
   };
+
+  commands: {
+    /** Placeholder text for the command palette search input */
+    searchPlaceholder: string;
+    /** Category heading for recently used commands */
+    recentCommands: string;
+    /** Category label for chat-related commands */
+    chat: string;
+    /** Category label for connection and service commands */
+    services: string;
+    /** Category label for system commands */
+    system: string;
+    /** Command label: start a new conversation */
+    newConversation: string;
+    /** Command label: open conversation history */
+    conversationHistory: string;
+    /** Command label: manage channels */
+    channelManagement: string;
+    /** Command label: open agent settings */
+    agentSettings: string;
+    /** Command label: manage scheduled tasks */
+    scheduleManagement: string;
+    /** Command label: open personal info page */
+    personalInfo: string;
+    /** Command label: open settings */
+    settings: string;
+    /** Command label: open dashboard/overview */
+    dashboard: string;
+    /** Command label: check usage statistics */
+    checkUsage: string;
+    /** Command label: manage skills */
+    skillManagement: string;
+    /** Command label: show logs */
+    showLogs: string;
+    /** Command label: open debug panel */
+    debug: string;
+    /** Command label: manage nodes */
+    nodeManagement: string;
+    /** Command label: view instances */
+    instances: string;
+  };
+
+  personal: {
+    /** Page heading for the personal info view */
+    title: string;
+    /** Subtitle/description for the personal info view */
+    subtitle: string;
+    /** Loading state label */
+    loading: string;
+    /** Reload button label */
+    reload: string;
+    /** Saving state label for the save button */
+    saving: string;
+    /** Save button label */
+    save: string;
+    /** Error message when personal info fails to load */
+    loadError: string;
+    /** Field label for employee ID */
+    employeeId: string;
+    /** Field label for employee name */
+    employeeName: string;
+    /** Field label for contact email */
+    email: string;
+    /** Field label for GRC URL */
+    grcUrl: string;
+    /** Placeholder shown when node is not connected */
+    notConnected: string;
+    /** Input placeholder for employee ID field */
+    employeeIdPlaceholder: string;
+    /** Input placeholder for employee name field */
+    employeeNamePlaceholder: string;
+    /** Input placeholder for email field */
+    emailPlaceholder: string;
+    /** Input placeholder for GRC URL field */
+    grcUrlPlaceholder: string;
+  };
 }

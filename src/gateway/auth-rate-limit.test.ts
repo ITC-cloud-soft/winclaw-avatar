@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AUTH_RATE_LIMIT_SCOPE_DEVICE_TOKEN,
   AUTH_RATE_LIMIT_SCOPE_SHARED_SECRET,
+  appendCredentialToScope,
   createAuthRateLimiter,
   type AuthRateLimiter,
 } from "./auth-rate-limit.js";
@@ -11,6 +12,18 @@ describe("auth rate limiter", () => {
 
   afterEach(() => {
     limiter?.dispose();
+  });
+
+  // WF1-C: per-credential scope fingerprint so one bad token can't lock the whole IP.
+  it("appendCredentialToScope: distinct creds → distinct buckets; same cred stable; none → base", () => {
+    const base = AUTH_RATE_LIMIT_SCOPE_SHARED_SECRET;
+    const a = appendCredentialToScope(base, "token-A");
+    const b = appendCredentialToScope(base, "token-B");
+    expect(a).toMatch(/^shared-secret#[0-9a-f]{12}$/);
+    expect(a).not.toBe(b); // different tokens → isolated buckets
+    expect(appendCredentialToScope(base, "token-A")).toBe(a); // same token → stable bucket
+    expect(appendCredentialToScope(base, undefined)).toBe(base); // no credential → IP-bucket
+    expect(appendCredentialToScope(base, "")).toBe(base);
   });
 
   // ---------- basic sliding window ----------
