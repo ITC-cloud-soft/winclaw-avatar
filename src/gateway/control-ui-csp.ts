@@ -12,6 +12,9 @@ export function buildControlUiCspHeader(): string {
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "img-src 'self' data: https:",
     "font-src 'self' https://fonts.gstatic.com",
-    "connect-src 'self' ws: wss: https://*.rtcplus.com https://*.byteplus.com https://*.volcengine.com https://*.volces.com",
+    // 数字人秘书 A案 身份桥(docs/10 §14.5): 節点 DH UI(secretary-panel)が ai-meta の
+    // /files /tasks REST を叩けるよう、ローカル ai-meta(localhost/127.0.0.1 任意ポート)を許可。
+    // 本番リモートは ai-meta 公網 host を明示追加(§13.4 方案Q)。
+    "connect-src 'self' ws: wss: http://localhost:* http://127.0.0.1:* https://*.rtcplus.com https://*.byteplus.com https://*.volcengine.com https://*.volces.com",
   ].join("; ");
 }

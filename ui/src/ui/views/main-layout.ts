@@ -28,6 +28,8 @@ import { html, nothing } from "lit";
 import { t } from "../../i18n/index.ts";
 import { renderDigitalHumanPanel, type DHPanelState } from "./digital-human.ts";
 import { renderChat, type ChatProps } from "./chat.ts";
+// 数字人秘书 A案(docs/10 §4.2): 右区を 3 段パネル(カスタム要素)へ。副作用 import で登録。
+import "../components/secretary-panel.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -48,6 +50,12 @@ export interface MainLayoutState {
   dhPanel: DHPanelState;
   /** All props needed to render the Chat panel (existing ChatProps shape) */
   chatPanel: ChatProps;
+
+  // ── 数字人秘书 A案 身份桥(docs/10 §14.5) ───────────────────────────────────
+  /** ai-meta scoped token(節点 UI が /files /tasks を叩く用)。null=秘书機能無効。 */
+  aimetaToken: string | null;
+  /** ai-meta API base(例 http://localhost:8000)。前端が DH URL ?api= で渡す。 */
+  aimetaApi: string | null;
 
   // ── Topbar / branding ─────────────────────────────────────────────────────
   /** DH / assistant display name shown in the simplified topbar */
@@ -234,9 +242,41 @@ export function renderMainLayout(state: MainLayoutState) {
     `orientation-${state.orientation}`,
   ].join(" ");
 
+  // 数字人秘书 A案(docs/10 §4.2): 顶栏(renderTopbarV3)は削除。右区は chat ではなく
+  // 秘书 3 段パネル(secretary-panel)。renderChat/renderChatFullscreenToggle/renderTopbarV3 は
+  // 従来 chat タブ用に残置(未使用参照回避のため下で void 参照)。
+  void renderChat;
+  void renderChatFullscreenToggle;
+  void renderTopbarV3;
   return html`
-    <div class="shell shell--chat shell--v3">
-      ${renderTopbarV3(state)}
+    <style>
+      /* 数字人秘书 A案(docs/10 §4.2): DH タブ表示中のみ外側の顶栏/セッションタブを隠す
+         (この <style> は DH レンダリング時だけ DOM に存在 → 他タブに影響しない)。 */
+      .shell--dh > .topbar { display: none !important; }
+      /* 旧 topbar 領域の余白を除去。shell は grid(named areas: topbar/main/statusbar)。
+         予約行(topbar)を 0 に潰す。外側は statusbar 行(32px)を残し、内側は全部潰す。 */
+      .shell--dh { padding: 0 !important; gap: 0 !important; grid-template-rows: 0 1fr 32px !important; }
+      .shell--dh .shell--secretary {
+        grid-template-rows: 0 1fr 0 !important; margin: 0 !important;
+      }
+      .shell--dh .session-tabs { display: none !important; }
+      .shell--dh .content-header { display: none !important; }
+      /* DH タブの外側余白/背景も設計稿(§4.2)に合わせて詰める */
+      .shell--dh > .content { padding: 0 !important; gap: 0 !important; }
+      .shell--dh .main-container { height: 100% !important; }
+      /* 設計稿 §4.2: avatar を主役に、右は固定幅サイドバー(~400px)。
+         layout-v3 の 50/50 split を上書き(split モード時のみ)。 */
+      .shell--dh .layout-split .panel-dh { flex: 1 1 auto !important; }
+      .shell--dh .layout-split .panel-secretary {
+        flex: 0 0 clamp(340px, 26vw, 440px) !important;
+        max-width: 440px !important;
+      }
+      /* portrait(縦)では上下分割のまま(サイドバー化しない) */
+      .shell--dh .orientation-portrait.layout-split .panel-secretary {
+        flex: 1 1 auto !important; max-width: none !important;
+      }
+    </style>
+    <div class="shell shell--chat shell--v3 shell--secretary">
 
       <div class=${containerClasses} role="main">
         <!-- ── Left / top: Digital Human panel ───────────────────────────── -->
@@ -254,13 +294,13 @@ export function renderMainLayout(state: MainLayoutState) {
           ${renderDigitalHumanPanel(state.dhPanel)}
         </section>
 
-        <!-- ── Right / bottom: Chat panel ───────────────────────────────── -->
-        <section
-          class="panel-chat"
-          aria-label=${t("chat.panelLabel")}
-        >
-          ${renderChatFullscreenToggle(state)}
-          ${renderChat(state.chatPanel)}
+        <!-- ── Right / bottom: 秘书面板(docs/10 §4.2 右区 3 段) ──────────── -->
+        <section class="panel-chat panel-secretary" aria-label=${t("chat.panelLabel")}>
+          <secretary-panel
+            .aimetaToken=${state.aimetaToken ?? null}
+            .aimetaApi=${state.aimetaApi ?? null}
+            .subtitle=${state.dhPanel.currentSubtitle ?? null}
+          ></secretary-panel>
         </section>
       </div>
 

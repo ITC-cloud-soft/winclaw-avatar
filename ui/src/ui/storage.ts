@@ -16,6 +16,10 @@ export type UiSettings = {
   openTabs: string[]; // Session tabs (Notion-style layout)
   recentCommands: string[]; // Command palette recent commands
   openChatSessions: string[]; // Open chat session keys (multi-session tabs)
+  // 数字人秘书 A案 身份桥(docs/10 §14.5): DH URL の ?aimeta=&api= から取得。節点 UI が
+  // ai-meta の /files /tasks を叩く scoped token + API base。空=秘书機能無効。
+  aimetaToken: string;
+  aimetaApi: string;
 };
 
 export function loadSettings(): UiSettings {
@@ -38,6 +42,8 @@ export function loadSettings(): UiSettings {
     openTabs: ["chat"],
     recentCommands: [],
     openChatSessions: [],
+    aimetaToken: "",
+    aimetaApi: "",
   };
 
   try {
@@ -97,6 +103,10 @@ export function loadSettings(): UiSettings {
         parsed.openChatSessions.every((s) => typeof s === "string")
           ? parsed.openChatSessions
           : defaults.openChatSessions,
+      aimetaToken:
+        typeof parsed.aimetaToken === "string" ? parsed.aimetaToken : defaults.aimetaToken,
+      aimetaApi:
+        typeof parsed.aimetaApi === "string" ? parsed.aimetaApi : defaults.aimetaApi,
     };
   } catch {
     return defaults;

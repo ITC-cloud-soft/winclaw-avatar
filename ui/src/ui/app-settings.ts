@@ -94,6 +94,9 @@ export function applySettingsFromUrl(host: SettingsHost) {
   const passwordRaw = params.get("password") ?? hashParams.get("password");
   const sessionRaw = params.get("session") ?? hashParams.get("session");
   const gatewayUrlRaw = params.get("gatewayUrl") ?? hashParams.get("gatewayUrl");
+  // 数字人秘书 A案 身份桥(docs/10 §14.5): DH URL の ?aimeta=<scoped token>&api=<ai-meta base>。
+  const aimetaRaw = params.get("aimeta") ?? hashParams.get("aimeta");
+  const apiRaw = params.get("api") ?? hashParams.get("api");
   let shouldCleanUrl = false;
 
   if (tokenRaw != null) {
@@ -103,6 +106,23 @@ export function applySettingsFromUrl(host: SettingsHost) {
     }
     params.delete("token");
     hashParams.delete("token");
+    shouldCleanUrl = true;
+  }
+
+  // 身份桥: aimeta/api を settings に保存(節点 UI の secretary-panel が使う)+ URL から削除。
+  if (aimetaRaw != null || apiRaw != null) {
+    const patch: Partial<typeof host.settings> = {};
+    if (aimetaRaw != null) {
+      patch.aimetaToken = aimetaRaw.trim();
+      params.delete("aimeta");
+      hashParams.delete("aimeta");
+    }
+    if (apiRaw != null) {
+      patch.aimetaApi = apiRaw.trim();
+      params.delete("api");
+      hashParams.delete("api");
+    }
+    applySettings(host, { ...host.settings, ...patch });
     shouldCleanUrl = true;
   }
 

@@ -161,6 +161,9 @@ function buildMainLayoutState(
     assistantName: state.assistantName ?? "WinClaw",
     dhOnline: state.dhConnectionStatus === "connected",
     basePath: state.basePath ?? "",
+    // 数字人秘书 A案 身份桥(docs/10 §14.5): settings 経由で秘书パネルへ。空文字は無効(null)。
+    aimetaToken: state.settings.aimetaToken || null,
+    aimetaApi: state.settings.aimetaApi || null,
     onSetLayoutMode: (mode) => {
       state.dhLayoutMode = mode;
     },
