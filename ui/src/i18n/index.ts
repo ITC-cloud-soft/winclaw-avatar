@@ -48,6 +48,23 @@ const listeners = new Set<() => void>();
  *  3. Fallback: "en"
  */
 export function detectLocale(): Locale {
+  // 0. URL ?lang= — 最優先。ai-meta 母画面(meta.myaiportal.net)が iframe URL に
+  //    現在の表示言語を載せて渡す(zh/en/ja)。母画面の言語切替に内嵌 chat を追従させる
+  //    ため、localStorage/navigator より優先する。値は portal コード(zh/en/ja)も受理し
+  //    control-ui ロケール(zh-CN/en/ja)へ正規化する。
+  try {
+    const search = new URLSearchParams(
+      typeof location !== 'undefined' ? location.search : '',
+    );
+    const hash = new URLSearchParams(
+      typeof location !== 'undefined' ? location.hash.replace(/^#/, '') : '',
+    );
+    const mapped = mapPortalLang(search.get('lang') ?? hash.get('lang'));
+    if (mapped) return mapped;
+  } catch {
+    // location/URL 解析不可な環境は無視
+  }
+
   // 1. Persisted user selection
   try {
     const saved = localStorage.getItem('winclaw-locale') as Locale | null;
@@ -83,6 +100,28 @@ export function detectLocale(): Locale {
 
   // 3. Fallback
   return 'en';
+}
+
+/**
+ * portal 言語コード(zh / en / ja …)や生の URL 値を control-ui の {@link Locale} へ
+ * 正規化する。既知 locale の直接一致 → prefix 一致 → zh 特例(zh → zh-CN)の順。
+ * 未知/空は null(呼び出し側で次の優先度へフォールバック)。
+ */
+export function mapPortalLang(raw: string | null | undefined): Locale | null {
+  if (!raw) return null;
+  const v = raw.trim();
+  if (!v) return null;
+  // 直接一致(zh-CN / en / ja / ko …)
+  if ((SUPPORTED_LOCALES as readonly string[]).includes(v)) return v as Locale;
+  const lower = v.toLowerCase();
+  // portal は 'zh' を渡す → 簡体を既定に
+  if (lower === 'zh') return 'zh-CN';
+  // prefix 一致(zh-hk → zh-CN, pt-br → pt)
+  const prefix = lower.split('-')[0];
+  const hit = SUPPORTED_LOCALES.find(
+    (l) => l.toLowerCase() === prefix || l.toLowerCase().startsWith(`${prefix}-`),
+  );
+  return hit ?? null;
 }
 
 // ---------------------------------------------------------------------------

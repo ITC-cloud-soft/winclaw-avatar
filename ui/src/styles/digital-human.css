@@ -37,6 +37,10 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
+  /* 左右居中 + 上部对齐(object-position: 横 50% / 縦 0%)。cover で溢れる分は
+     下側だけを切り、人物の頭部が画面比率に関わらず常に見えるようにする
+     (既定の 50% 50% だと上下均等に切れて頭が隠れる。2026-07-07 要望)。 */
+  object-position: 50% 0%;
   display: block;
 }
 
@@ -430,21 +434,8 @@
   }
 }
 
-/* Voice selector dropdown */
-.dh-voice-select {
-  height: 36px;
-  padding: 0 8px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border);
-  background: var(--bg-elevated);
-  color: var(--text);
-  font-size: 13px;
-  cursor: pointer;
-  outline: none;
-}
-.dh-voice-select:focus {
-  border-color: var(--accent);
-}
+/* (voice selector dropdown removed 2026-07-04 — voice is controlled from the
+   ai-meta companion-management screen; styles dropped to avoid dead rules) */
 
 /* Thinking indicator badge */
 .dh-thinking-badge {

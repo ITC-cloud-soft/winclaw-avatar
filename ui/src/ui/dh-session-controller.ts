@@ -41,6 +41,8 @@ export type DHSessionCallbacks = {
   onUserTranscript: (transcript: string) => void;
   /** Fired when agent starts/stops thinking. */
   onThinkingChange?: (thinking: boolean) => void;
+  /** Fired when the digital-human avatar is shown/hidden (on-demand lifecycle). */
+  onAvatarActiveChange?: (active: boolean) => void;
 };
 
 // ---------------------------------------------------------------------------
@@ -108,6 +110,18 @@ export class DHSessionController {
    * returns video only over WebRTC, no audio track).
    */
   private museTalkMode = false;
+
+  // ── 数字人形象 オンデマンド・ライフサイクル(docs/10 §4.2) ────────────────────
+  // Qwen realtime(WS+マイク)は常時 ON。avatar(MuseTalk)は対話中だけ表示し、
+  // 無対話が続くと自動で閉じ、次の対話で再唤醒する。手動トグルも維持。
+  /** サーバから受けた stream_info(再唤醒時の再 negotiate に再利用)。 */
+  private streamInfo: DHStreamInfo | null = null;
+  /** 対話中/手動 ON = avatar を出したい状態。ロード直後は false(待機)。 */
+  private avatarWanted = false;
+  /** 無対話アイドルタイマー(発火で avatar を閉じる)。 */
+  private idleTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 無対話で avatar を閉じるまでの時間(ms)。 */
+  private static readonly AVATAR_IDLE_MS = 60_000;
   private player: AudioStreamPlayer | null = null;
   private callbacks: DHSessionCallbacks;
   private unmuteTimer: ReturnType<typeof setTimeout> | null = null;
@@ -183,8 +197,11 @@ export class DHSessionController {
       this.unmuteTimer = null;
     }
 
-    // Reset provider mode for the next session.
+    // Reset provider mode + avatar lifecycle state for the next session.
     this.museTalkMode = false;
+    if (this.idleTimer !== null) { clearTimeout(this.idleTimer); this.idleTimer = null; }
+    this.streamInfo = null;
+    this.avatarWanted = false;
 
     // 1. Stop the microphone recorder and camera.
     if (this.recorder) {
@@ -224,6 +241,70 @@ export class DHSessionController {
     this.recorder.setMuted(nextMuted);
     // Return whether the mic is now *enabled* (i.e. not muted).
     return !nextMuted;
+  }
+
+  /**
+   * Tier 2 実時声音切替: 新しい Qwen 音色をサーバ(節点 dh 插件)へ通知する。
+   * サーバ側で Qwen realtime を新 voice で張り直し、次の一句から新しい声になる
+   * (avatar / audio sink は不変、コンテナ再起動不要)。WS 未接続なら no-op。
+   * @param voice 新しい Qwen 音色 id(例: "Ethan" / "Cherry" / "Serena")。
+   * @returns 指令を送れたら true。
+   */
+  setVoice(voice: string): boolean {
+    if (!this.ws) {
+      console.warn('[DHSessionController] setVoice — no active session');
+      return false;
+    }
+    this.ws.sendVoiceChange(voice);
+    return true;
+  }
+
+  // ---------------------------------------------------------------------------
+  // 数字人形象 オンデマンド・ライフサイクル
+  // ---------------------------------------------------------------------------
+  /** avatar を表示(対話 or 手動)。stream_info があれば negotiate。idle タイマー reset。 */
+  showAvatar(): void {
+    this.avatarWanted = true;
+    this.resetIdleTimer();
+    if (this.rtcViewer) return; // 既に表示中
+    if (this.streamInfo) {
+      // 有効な stream_info があれば即 negotiate。
+      this.initRtcViewer(this.streamInfo);
+      this.callbacks.onAvatarActiveChange?.(true);
+    } else {
+      // B案: pause 後は stream_info を破棄済。winclaw に再 mint を要求し、
+      // 新しい dh_stream_info 到着時(onDhStreamInfo)に negotiate される(再唤醒)。
+      this.ws?.sendAvatarResume();
+    }
+  }
+  /** avatar を閉じる(WebRTC 切断 → VM room 解放。Qwen WS/マイクは維持=対話は継続可能)。 */
+  hideAvatar(): void {
+    this.avatarWanted = false;
+    if (this.idleTimer !== null) { clearTimeout(this.idleTimer); this.idleTimer = null; }
+    if (this.rtcViewer) {
+      this.rtcViewer.destroy(); // WebRTC 切断 → dh-saas セッション(VM room)が閉じ GPU/slot 解放
+      this.rtcViewer = null;
+    }
+    this.museTalkMode = false;
+    // B案: winclaw 側の後片付け(audio sink 閉じ等)+ 次回は再 mint させるため stream_info 破棄。
+    this.ws?.sendAvatarPause();
+    this.streamInfo = null;
+    this.callbacks.onAvatarActiveChange?.(false);
+  }
+  /** 手動トグル。表示中なら閉じ、非表示なら表示。新しい表示状態を返す。 */
+  toggleAvatar(): boolean {
+    if (this.rtcViewer) { this.hideAvatar(); return false; }
+    this.showAvatar();
+    return true;
+  }
+  isAvatarActive(): boolean { return this.rtcViewer !== null; }
+  /** 無対話アイドルタイマーを張り直す(対話イベントごとに reset)。 */
+  private resetIdleTimer(): void {
+    if (this.idleTimer !== null) clearTimeout(this.idleTimer);
+    this.idleTimer = setTimeout(() => {
+      this.idleTimer = null;
+      if (this.rtcViewer) this.hideAvatar(); // 1分無対話 → avatar 自動クローズ
+    }, DHSessionController.AVATAR_IDLE_MS);
   }
 
   private cameraStream: MediaStream | null = null;
@@ -318,7 +399,13 @@ export class DHSessionController {
 
       onDhStreamInfo: (info: DHStreamInfo) => {
         console.log('[DHSessionController] DH stream info received:', info);
-        this.initRtcViewer(info);
+        // オンデマンド: stream_info は保存し、avatar はロード時には出さない(待機)。
+        // 対話中/手動 ON 済(avatarWanted)なら即 negotiate。
+        this.streamInfo = info;
+        if (this.avatarWanted && !this.rtcViewer) {
+          this.initRtcViewer(info);
+          this.callbacks.onAvatarActiveChange?.(true);
+        }
       },
 
       onAiText: (content: string, isDelta: boolean) => {
@@ -342,6 +429,8 @@ export class DHSessionController {
       },
 
       onAiResponseStarted: () => {
+        // 対話イベント: avatar を表示(未表示なら再唤醒)+ idle タイマー reset。
+        this.showAvatar();
         // Mute the microphone immediately to suppress echo during AI speech.
         if (this.recorder) {
           this.recorder.setMuted(true);
@@ -379,6 +468,8 @@ export class DHSessionController {
       },
 
       onUserTranscript: (transcript: string) => {
+        // 対話イベント(ユーザー発話): avatar を表示(再唤醒)+ idle タイマー reset。
+        this.showAvatar();
         this.callbacks.onUserTranscript(transcript);
       },
 
@@ -388,6 +479,15 @@ export class DHSessionController {
 
       onError: (code: string, message: string) => {
         console.error(`[DHSessionController] Backend error [${code}]: ${message}`);
+        if (code === 'AVATAR_MINT_FAILED') {
+          // avatar(数字人形象)の mint のみ失敗。Qwen 音声対話は継続しているので
+          // セッションを 'error' にはせず、avatar 状態だけリセットして
+          // ボタンを「数字人 ON」に戻す(ユーザは再度 ON で mint を試せる)。
+          this.avatarWanted = false;
+          if (this.idleTimer !== null) { clearTimeout(this.idleTimer); this.idleTimer = null; }
+          this.callbacks.onAvatarActiveChange?.(false);
+          return;
+        }
         this.callbacks.onErrorMessage(message);
         this.callbacks.onConnectionStatusChange('error');
       },

@@ -19,8 +19,8 @@
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { readFile, readdir } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { readFile, readdir, stat } from "node:fs/promises";
+import { isAbsolute, join, resolve, sep } from "node:path";
 import { ZodError } from "zod";
 import { WebSocketServer, WebSocket, type RawData as WsRawData } from "ws";
 
@@ -324,7 +324,42 @@ async function startDhWsServer(
     wss.once("error", reject);
   });
 
+  // ── Dead-connection detection (WS protocol-level ping/pong) ────────────────
+  // ブラウザが返回ボタン/リンク遷移/クラッシュ/ネット切断で TCP を綺麗に閉じないと
+  // ws の "close" が発火せず、session が漏れて dh-saas の room(concurrent_room_quota)
+  // も解放されない → 数回で 12/12 に達し 429 で数字人が出せなくなる。
+  // 定期的に protocol ping を送り、次の tick までに pong が返らない接続を terminate
+  // する → "close" 発火 → stopSession → cleanup → avatarProvider.stop() で room 解放。
+  // (ブラウザは protocol ping へ JS 無しで自動 pong するので、タブが固まっても検知可)。
+  const DH_WS_HEARTBEAT_MS = 30_000;
+  const wsAlive = new WeakMap<WebSocket, boolean>();
+  const heartbeat = setInterval(() => {
+    dhWss?.clients.forEach((ws) => {
+      if (wsAlive.get(ws) === false) {
+        log.warn(
+          `[digital-human] Dead connection detected (no pong within ${DH_WS_HEARTBEAT_MS}ms) — terminating to release resources`,
+        );
+        try {
+          ws.terminate();
+        } catch {
+          /* noop */
+        }
+        return;
+      }
+      wsAlive.set(ws, false);
+      try {
+        ws.ping();
+      } catch {
+        /* noop */
+      }
+    });
+  }, DH_WS_HEARTBEAT_MS);
+  dhWss!.on("close", () => clearInterval(heartbeat));
+
   dhWss!.on("connection", (ws: WebSocket, req: IncomingMessage) => {
+    // Dead-connection detection: mark alive on connect + on every pong.
+    wsAlive.set(ws, true);
+    ws.on("pong", () => wsAlive.set(ws, true));
     const url = new URL(req.url ?? "/", `http://localhost:${wsPort}`);
     const parts = url.pathname.split("/").filter(Boolean);
     const sessionToken = parts[parts.length - 1] ?? "";
@@ -433,6 +468,17 @@ async function startDhWsServer(
             // MuseTalk WebRTC SDP offer — proxy server-side to dh-saas (the VM
             // sends no CORS header so the browser can't POST it directly).
             void currentHandler.handleMuseTalkOffer(msg.data.sdp, msg.data.webrtcId);
+            break;
+
+          case "avatar_pause":
+            // オンデマンド(B案): idle で avatar を閉じた。VM room は browser の WebRTC
+            // 切断で解放される。winclaw 側は audio sink を閉じて後片付けする。
+            void currentHandler.handleAvatarPause();
+            break;
+
+          case "avatar_resume":
+            // 再唤醒: dh-saas セッションを mint し直し、新しい dh_stream_info を再送する。
+            void currentHandler.handleAvatarResume();
             break;
 
           case "ping":
@@ -545,6 +591,9 @@ export default function digitalHumanPlugin(api: WinClawPluginApiMinimal): void {
   const workspaceDir =
     api.config?.agents?.defaults?.workspace ??
     (api.resolvePath ? api.resolvePath("workspace") : process.cwd());
+  // 成果物配信ルート(/api/dh/file, /api/dh/ls)が使う実 workspace。service start で
+  // ctx.workspaceDir(WS サーバ/メモリコアと同一=エージェントが実際に書くパス)へ更新する。
+  let routeWorkspaceDir = workspaceDir;
 
   // WS port: prefer config extension wsPort, fall back to gateway port + 1 or 18790
   const gatewayPort = api.config?.gateway?.port ?? 18789;
@@ -558,6 +607,7 @@ export default function digitalHumanPlugin(api: WinClawPluginApiMinimal): void {
     id: "digital-human-ws",
     start: async (ctx) => {
       const dir = ctx.workspaceDir ?? workspaceDir;
+      routeWorkspaceDir = dir;
       await startDhWsServer(config, dir, wsPort, gatewayPort, gatewayToken, api.logger);
     },
     stop: async () => {
@@ -611,6 +661,106 @@ export default function digitalHumanPlugin(api: WinClawPluginApiMinimal): void {
       }
       await dhSessionManager!.stopSession(sessionId);
       jsonResponse(res, 200, { stopped: true, sessionId });
+      return true;
+    },
+  });
+
+  // 成果物 preview/download(docs/10 §14.5 A案): workspace ファイルを配信する。
+  // ai-meta が nodes.gateway_token を使い ?token= 付きで代理取得し、secretary-panel が
+  // preview(html/pdf/画像/テキスト)+ download する。path 穿越はガード。
+  api.registerHttpRoute({
+    path: "/api/dh/file",
+    auth: "gateway",
+    match: "prefix",
+    handler: async (req, res) => {
+      if (req.method !== "GET") return false;
+      const u = new URL(req.url ?? "/", "http://localhost");
+      const rel = (u.searchParams.get("path") ?? "").replace(/\\/g, "/").replace(/^\/+/, "");
+      if (!rel || rel.split("/").some((p) => p === "..")) {
+        jsonResponse(res, 400, { error: "invalid path" });
+        return true;
+      }
+      const root = resolve(routeWorkspaceDir);
+      const abs = resolve(join(routeWorkspaceDir, rel));
+      if (abs !== root && !abs.startsWith(root + sep)) {
+        jsonResponse(res, 403, { error: "forbidden" });
+        return true;
+      }
+      let buf: Buffer;
+      try {
+        buf = await readFile(abs);
+      } catch {
+        jsonResponse(res, 404, { error: "not found" });
+        return true;
+      }
+      const name = rel.split("/").pop() || "file";
+      const ext = (name.split(".").pop() || "").toLowerCase();
+      const CT: Record<string, string> = {
+        html: "text/html; charset=utf-8", htm: "text/html; charset=utf-8",
+        txt: "text/plain; charset=utf-8", md: "text/markdown; charset=utf-8",
+        json: "application/json; charset=utf-8", csv: "text/csv; charset=utf-8",
+        js: "text/javascript; charset=utf-8", ts: "text/plain; charset=utf-8",
+        py: "text/plain; charset=utf-8", css: "text/css; charset=utf-8",
+        pdf: "application/pdf", png: "image/png", jpg: "image/jpeg",
+        jpeg: "image/jpeg", gif: "image/gif", svg: "image/svg+xml", webp: "image/webp",
+      };
+      const headers: Record<string, string> = {
+        "content-type": CT[ext] ?? "application/octet-stream",
+        "content-length": String(buf.length),
+      };
+      if (u.searchParams.get("dl") === "1") {
+        headers["content-disposition"] = `attachment; filename="${encodeURIComponent(name)}"`;
+      }
+      res.writeHead(200, headers);
+      res.end(buf);
+      return true;
+    },
+  });
+
+  // 成果物一覧(docs/10 §14.5 A案): workspace の生成ファイルを列挙する。
+  // エージェントが実際に書いたファイル(引数ズレの影響を受けない)を ai-meta proxy 経由で
+  // secretary-panel に出す。winclaw 内部ファイル/node_modules/persona 8md は除外。
+  api.registerHttpRoute({
+    path: "/api/dh/ls",
+    auth: "gateway",
+    match: "prefix",
+    handler: async (req, res) => {
+      if (req.method !== "GET") return false;
+      const u = new URL(req.url ?? "/", "http://localhost");
+      const relDir = (u.searchParams.get("dir") ?? "").replace(/\\/g, "/").replace(/^\/+/, "");
+      if (relDir.split("/").some((p) => p === "..")) {
+        jsonResponse(res, 400, { error: "invalid dir" });
+        return true;
+      }
+      const root = resolve(routeWorkspaceDir);
+      const absDir = resolve(join(routeWorkspaceDir, relDir));
+      if (absDir !== root && !absDir.startsWith(root + sep)) {
+        jsonResponse(res, 403, { error: "forbidden" });
+        return true;
+      }
+      const EXCLUDE = new Set([
+        "node_modules", "memory", "package.json", "package-lock.json", "tsconfig.json",
+        "SOUL.md", "IDENTITY.md", "USER.md", "AGENTS.md", "TOOLS.md",
+        "HEARTBEAT.md", "BOOTSTRAP.md", "TASKS.md", "MEMORY.md",
+      ]);
+      const OK = /\.(html?|pdf|md|txt|csv|json|png|jpe?g|gif|svg|webp|js|css|py|docx|pptx|xlsx)$/i;
+      let ents: Awaited<ReturnType<typeof readdir>>;
+      try {
+        ents = await readdir(absDir, { withFileTypes: true });
+      } catch {
+        jsonResponse(res, 404, { error: "not found" });
+        return true;
+      }
+      const files: Array<{ name: string; path: string; size: number; mtime: number }> = [];
+      for (const e of ents) {
+        if (e.name.startsWith(".") || EXCLUDE.has(e.name) || !e.isFile() || !OK.test(e.name)) continue;
+        try {
+          const st = await stat(join(absDir, e.name));
+          files.push({ name: e.name, path: relDir ? `${relDir}/${e.name}` : e.name, size: st.size, mtime: st.mtimeMs });
+        } catch { /* skip unreadable */ }
+      }
+      files.sort((a, b) => b.mtime - a.mtime);
+      jsonResponse(res, 200, { files });
       return true;
     },
   });

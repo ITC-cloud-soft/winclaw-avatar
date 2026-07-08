@@ -1570,6 +1570,9 @@ async function checkAndRefreshOAuthTokenIfNeededImpl(
 }
 
 export function isClaudeAISubscriber(): boolean {
+  // z.ai(custom Bearer token)利用時は Claude OAuth/subscriber 経路を使わない。
+  // 通常の Claude Code/OAuth 利用には影響しない(その場合 env は未設定)。
+  if (process.env.ANTHROPIC_AUTH_TOKEN) return false
   if (!isAnthropicAuthEnabled()) {
     return false
   }

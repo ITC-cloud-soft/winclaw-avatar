@@ -187,7 +187,8 @@ export function buildInstructions(input: InstructionsInput): string {
       `  memory_get(path,...)       — 特定のメモファイル読出\n` +
       `  task_run(taskName, args)   — 明確に名前の分かるタスク実行\n` +
       `  channel_send(channel, to, body) — 明確な送信先のメッセージ送信\n` +
-      `  internet_search(query)     — リアルタイム情報 (天気/ニュース/株価等)`,
+      `  internet_search(query)     — リアルタイム情報 (天気/ニュース/株価等)\n` +
+      `  ui_action(target, action, name?) — 画面そのものの操作 (パネル/マイク/カメラ/アバターの表示切替)`,
   );
 
   sections.push(
@@ -200,6 +201,14 @@ export function buildInstructions(input: InstructionsInput): string {
       `3. 「実行して/やって/処理して/試して/起動して」→ task_run or ask_winclaw\n` +
       `4. 「覚えてる？/昨日の話/この前の/前に話した」→ memory_search\n` +
       `5. 「今の天気/最新の/今日の株価/ニュース/何時/今日は何曜日」→ internet_search\n` +
+      `6. 「(パネル/成果物/操作)を開いて/閉じて/表示して/隠して」「マイク/カメラを\n` +
+      `   オン/オフ」「アバターを出して/止めて」→ ui_action\n` +
+      `\n` +
+      `**ui_action と task_run を混同しない**: ui_action は「画面そのものの操作」\n` +
+      `(パネル/成果物/操作パネルの表示切替、マイク/カメラのオンオフ、アバター切替)\n` +
+      `専用で、バックエンド処理は一切しない。メールを読む・送る・調べる等の\n` +
+      `**実務は必ず task_run か ask_winclaw**。「タスクパネルを開いて」は ui_action、\n` +
+      `「タスクを実行して」は task_run。\n` +
       `\n` +
       `判断に迷ったら、**ask_winclaw(主人の発話そのまま)** を呼ぶ。Winclaw エージェントが\n` +
       `自然言語を解釈して適切に実行する。**絶対に作り話をせず ask_winclaw を頼る**。\n` +

@@ -36,6 +36,57 @@ type AgentLike = {
   replaceMessages: (ms: PiAgentMessage[]) => void;
 };
 
+// 秘书安全门(§15.3 / docs/10 §18): 无人值守の coding turn で実行を許さない
+// 危険コマンド。対外(curl/wget/ssh/scp/...)、破壊的(rm -r*)、公開(git push/
+// npm publish)、提権/系统(sudo/chmod/chown/kill/shutdown/mkfs/dd)。
+// これらは §15 で「主人の二次確認が要る」分類 = 無人時は deny。
+const SECRETARY_DENY_CMD =
+  /(^|[\s;&|`(){}])(curl|wget|ssh|scp|sftp|rsync|nc|ncat|netcat|telnet|rm|sudo|chmod|chown|kill|pkill|shutdown|reboot|mkfs|dd)\b|\bgit\s+push\b|\bnpm\s+publish\b/i;
+
+// エンジン native の alwaysDenyRules 用。Bash(cmd:*) は当該コマンドで始まる全実行を
+// deny。対外(curl/wget/ssh/scp/...)、破壊(rm)、提権(sudo/chmod/chown/kill/...)、
+// 公開(git push/npm publish)、WebFetch(任意 URL 取得)を hard-deny。
+// これらは §15 で「主人の二次確認が要る」分類 = 無人時は deny。
+const SECRETARY_DENY_RULES: string[] = [
+  "Bash(curl:*)",
+  "Bash(wget:*)",
+  "Bash(ssh:*)",
+  "Bash(scp:*)",
+  "Bash(sftp:*)",
+  "Bash(rsync:*)",
+  "Bash(nc:*)",
+  "Bash(ncat:*)",
+  "Bash(telnet:*)",
+  "Bash(rm:*)",
+  "Bash(sudo:*)",
+  "Bash(chmod:*)",
+  "Bash(chown:*)",
+  "Bash(kill:*)",
+  "Bash(pkill:*)",
+  "Bash(shutdown:*)",
+  "Bash(reboot:*)",
+  "Bash(mkfs:*)",
+  "Bash(dd:*)",
+  "Bash(git push:*)",
+  "Bash(npm publish:*)",
+  "WebFetch",
+];
+
+/** 許可可否を判定。deny なら理由文字列、allow なら null。 */
+function evaluateSecretaryPermission(
+  toolName: string,
+  input: Record<string, unknown>,
+): string | null {
+  const name = toolName.toLowerCase();
+  if (name === "bash" || name === "exec" || name === "shell") {
+    const cmd = String((input.command ?? input.cmd ?? "") || "");
+    if (SECRETARY_DENY_CMD.test(cmd)) {
+      return `命令被秘书安全策略拒绝(对外/破坏性/提权操作需主人显式授权): ${cmd.slice(0, 120)}`;
+    }
+  }
+  return null;
+}
+
 let configsEnabled = false;
 
 export class MetaCoderSession {
@@ -70,10 +121,29 @@ export class MetaCoderSession {
   constructor(private opts: MetaCoderSessionOptions) {
     this._systemPrompt = opts.appendSystemPrompt ?? "";
     this._seedHistory = opts.initialMessages?.slice() ?? [];
-    // bypass permission prompts for unattended runs
-    const as = this.appState as unknown as { toolPermissionContext?: { mode?: string } };
+    // 無人値守の能力門控(§15.3 / docs/10 §18)。bypassPermissions は全許可で
+    // 危険コマンドも通すため使わない。mode="default" + エンジン native の
+    // alwaysDenyRules(Bash(cmd:*) パターン)で、対外/破壊/提権コマンドを
+    // hard-deny する。default では deny に当たらない bash は自動許可されるので、
+    // ホワイトリストではなくブラックリスト(deny)方式。read-only/Write/python 等は通る。
+    // alwaysDenyRules[source] は **文字列配列**("Bash(rm:*)" 形式)。
+    // getDenyRules が permissionRuleValueFromString で各文字列を解析する
+    // (permissions.ts:213-220)。'session' は有効な PERMISSION_RULE_SOURCES。
+    const as = this.appState as unknown as {
+      toolPermissionContext?: {
+        mode?: string;
+        alwaysDenyRules?: Record<string, string[]>;
+      };
+    };
     if (as.toolPermissionContext) {
-      as.toolPermissionContext.mode = "bypassPermissions";
+      as.toolPermissionContext.mode = "default";
+      as.toolPermissionContext.alwaysDenyRules = {
+        ...(as.toolPermissionContext.alwaysDenyRules ?? {}),
+        session: [
+          ...((as.toolPermissionContext.alwaysDenyRules ?? {}).session ?? []),
+          ...SECRETARY_DENY_RULES,
+        ],
+      };
     }
   }
 
@@ -123,8 +193,12 @@ export class MetaCoderSession {
     // override to this turn and restore afterwards so we never leak global state.
     const prevKey = process.env.ANTHROPIC_API_KEY;
     const prevBase = process.env.ANTHROPIC_BASE_URL;
+    // z.ai の anthropic endpoint は Bearer 認証必須。ANTHROPIC_AUTH_TOKEN も
+    // per-turn で設定/復元し、isClaudeAISubscriber() の OAuth 経路を抑止する。
+    const prevAuth = process.env.ANTHROPIC_AUTH_TOKEN;
     if (this.opts.apiKey) {
       process.env.ANTHROPIC_API_KEY = this.opts.apiKey;
+      process.env.ANTHROPIC_AUTH_TOKEN = this.opts.apiKey;
     }
     if (this.opts.baseUrl) {
       process.env.ANTHROPIC_BASE_URL = this.opts.baseUrl;
@@ -139,10 +213,18 @@ export class MetaCoderSession {
         : []) as Array<{ prompt?: unknown; name?: string }>;
       const tools = [...baseTools, ...bridged];
       const commands = await getCommands(this.opts.cwd);
-      const canUseTool = async (_t: unknown, input: Record<string, unknown>) => ({
-        behavior: "allow" as const,
-        updatedInput: input,
-      });
+      // 秘书安全门(§15.3 / docs/10 §18): 无人值守下,对外/破坏性/提权の
+      // shell 命令を deny。それ以外(python/node/file 操作/web 検索等)は allow。
+      // 主 agent の §15 推理層と二重防御を成す。
+      const canUseTool = async (toolOrName: unknown, input: Record<string, unknown>) => {
+        // canUseTool の第1引数は **ツールオブジェクト**(.name を持つ)。名前文字列ではない。
+        const tname = String((toolOrName as { name?: string })?.name ?? toolOrName ?? "");
+        const denyReason = evaluateSecretaryPermission(tname, input);
+        if (denyReason) {
+          return { behavior: "deny" as const, message: denyReason };
+        }
+        return { behavior: "allow" as const, updatedInput: input };
+      };
 
       const sp = this._systemPrompt || undefined;
 
@@ -168,7 +250,11 @@ export class MetaCoderSession {
             ]
           : text;
 
-      for await (const m of ask({
+      // 認証が通った後、最終答案(result)の後にエンジンがもう1回 z.ai へ投げ、
+      // その SSE が「first chunk 後に無音・無 close」で永久停止することがある。
+      // 手動イテレータ化し、(a) result 受信で即 break、(b) 60s 無音で保険 break。
+      // __mcIter.return() は await しない(僵死 generator の cleanup で再ハングするため)。
+      const __mcIter = (ask({
         prompt: promptContent as never,
         cwd: this.opts.cwd,
         tools,
@@ -185,9 +271,45 @@ export class MetaCoderSession {
         userSpecifiedModel: this.opts.model,
         appendSystemPrompt: sp,
         abortController: this.abortController,
-      } as never) as AsyncIterable<SDKMessage>) {
+      } as never) as AsyncIterable<SDKMessage>)[Symbol.asyncIterator]();
+      while (true) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let __mcRes: any;
+        let __mcTimer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          __mcRes = await Promise.race([
+            __mcIter.next(),
+            new Promise((rs) => {
+              __mcTimer = setTimeout(() => rs({ __idle: true }), 60000);
+            }),
+          ]);
+        } catch {
+          break;
+        } finally {
+          if (__mcTimer) clearTimeout(__mcTimer);
+        }
+        if (!__mcRes || __mcRes.done) break;
+        if (__mcRes.__idle) {
+          try {
+            this.abortController?.abort();
+          } catch {}
+          try {
+            if (__mcIter.return) void Promise.resolve(__mcIter.return()).catch(() => {});
+          } catch {}
+          break;
+        }
+        const m = __mcRes.value as SDKMessage;
         for (const evt of this.translator.translate(m)) {
           this.emit(evt);
+        }
+        if (m && (m as { type?: string }).type === "result") {
+          try {
+            this.abortController?.abort();
+          } catch {}
+          try {
+            if (__mcIter.return) void Promise.resolve(__mcIter.return()).catch(() => {});
+          } catch {}
+          break;
         }
       }
 
@@ -206,6 +328,11 @@ export class MetaCoderSession {
         delete process.env.ANTHROPIC_BASE_URL;
       } else {
         process.env.ANTHROPIC_BASE_URL = prevBase;
+      }
+      if (prevAuth === undefined) {
+        delete process.env.ANTHROPIC_AUTH_TOKEN;
+      } else {
+        process.env.ANTHROPIC_AUTH_TOKEN = prevAuth;
       }
     }
   }

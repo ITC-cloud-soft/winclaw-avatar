@@ -11,6 +11,43 @@ import { html, nothing } from "lit";
 import { t } from "../../i18n/index.ts";
 
 // ---------------------------------------------------------------------------
+// Qwen realtime voice catalog (client mirror)
+// ---------------------------------------------------------------------------
+
+/**
+ * Curated Qwen 3.5 realtime voices offered in the in-page selector. Ids MUST
+ * match the server catalog (`docker/overlay-secui/dh-src/integrations/qwen-voices.ts`)
+ * so the `voice_change` command the browser sends validates on the node side.
+ * Grouped by gender for the dropdown; `Serena` is the DashScope default.
+ */
+export interface DHVoiceOption {
+  /** Voice id sent in `voice_change` (must exist in the server catalog). */
+  id: string;
+  /** Label shown in the dropdown. */
+  label: string;
+  gender: "female" | "male";
+}
+
+/** Female + male Qwen voices exposed in the DH panel selector. */
+export const DH_VOICE_OPTIONS: ReadonlyArray<DHVoiceOption> = [
+  // 女声 (female)
+  { id: "Serena", label: "Serena · 温暖 (默认)", gender: "female" },
+  { id: "Cherry", label: "Cherry · 年轻", gender: "female" },
+  { id: "Chelsie", label: "Chelsie · 明亮", gender: "female" },
+  { id: "Bella", label: "Bella · EN♀", gender: "female" },
+  { id: "Aria", label: "Aria · EN♀ 明亮", gender: "female" },
+  // 男声 (male)
+  { id: "Ethan", label: "Ethan · 沉稳", gender: "male" },
+  { id: "River", label: "River · 浑厚", gender: "male" },
+  { id: "Cove", label: "Cove · 冷静", gender: "male" },
+  { id: "Daniel", label: "Daniel · EN♂ 专业", gender: "male" },
+  { id: "Frank", label: "Frank · EN♂ 低沉", gender: "male" },
+];
+
+/** Default Qwen voice (mirrors server `DEFAULT_VOICE`). */
+export const DH_DEFAULT_VOICE = "Serena";
+
+// ---------------------------------------------------------------------------
 // State interface
 // ---------------------------------------------------------------------------
 
@@ -47,6 +84,10 @@ export interface DHPanelState {
   onStart: () => void;
   /** Called when the user clicks the "End Session" button */
   onStop: () => void;
+  /** Whether the digital-human avatar (MuseTalk) is currently shown. Independent of the Qwen voice session. */
+  avatarActive: boolean;
+  /** Toggle the avatar on/off. Does NOT stop the Qwen voice conversation. */
+  onToggleAvatar: () => void;
   /** Called when the mic toggle button is clicked */
   onToggleMic: () => void;
   /** Called when the camera toggle button is clicked */
@@ -141,27 +182,8 @@ function renderCameraPip(cameraEnabled: boolean) {
   `;
 }
 
-function renderSubtitle(state: DHPanelState) {
-  return html`
-    <div class="dh-subtitle ${state.subtitleVisible ? "" : "collapsed"}">
-      <div class="dh-subtitle-inner">
-        <p class="dh-subtitle-text" aria-live="polite" aria-atomic="true">
-          ${state.currentSubtitle || html`<span class="dh-subtitle-empty">&nbsp;</span>`}
-        </p>
-        <button
-          class="dh-subtitle-toggle"
-          @click=${state.onToggleSubtitle}
-          title=${t(state.subtitleVisible ? "dh.collapseSubtitle" : "dh.expandSubtitle")}
-          aria-expanded=${state.subtitleVisible ? "true" : "false"}
-        >
-          ${state.subtitleVisible
-            ? html`<svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2"><polyline points="18 15 12 9 6 15"/></svg>`
-            : html`<svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>`}
-        </button>
-      </div>
-    </div>
-  `;
-}
+// renderSubtitle は削除（ユーザ要望 2026-07-07: 内嵌数字人画面の下方字幕を非表示）。
+// 字幕 state(dhSubtitleVisible/dhCurrentSubtitle)と onSubtitleUpdate は残すが UI には出さない。
 
 function renderMicIcon(enabled: boolean) {
   return enabled
@@ -197,8 +219,11 @@ function renderControls(state: DHPanelState) {
   const micLabel = t(state.micEnabled ? "dh.micOn" : "dh.micOff");
   const camLabel = t(state.cameraEnabled ? "dh.camOn" : "dh.camOff");
 
+  // Sprint D §4.4: 控制条は main-layout の brand 换肤(玻璃 pill + 激活态渐变)を
+  // 受ける。dh-controls--brand は brand テーマ適用済みの目印(将来のフック用)。
+  // 既存の .dh-controls / .dh-btn.active|primary|danger 構造は不変(保功能)。
   return html`
-    <div class="dh-controls" role="toolbar" aria-label=${t("dh.controlsLabel")}>
+    <div class="dh-controls dh-controls--brand" role="toolbar" aria-label=${t("dh.controlsLabel")}>
       <!-- Mic toggle -->
       <button
         class="dh-btn ${state.micEnabled ? "active" : "inactive"}"
@@ -223,53 +248,28 @@ function renderControls(state: DHPanelState) {
         <span class="dh-btn-label">${camLabel}</span>
       </button>
 
-      <!-- Voice selector (CosyVoice) -->
-      <select
-        class="dh-voice-select"
-        .value=${state.selectedVoice}
-        @change=${(e: Event) => state.onVoiceChange((e.target as HTMLSelectElement).value)}
-        title="Voice"
-      >
-        <optgroup label="女性">
-          <option value="longxiaochun">小春·温柔</option>
-          <option value="longxiaoxia">小夏·活泼</option>
-          <option value="longxiaoqian">小芊·知性</option>
-          <option value="longwan">小婉·优雅</option>
-          <option value="longyue">小悦·甜美</option>
-          <option value="longtong">小彤·自然</option>
-        </optgroup>
-        <optgroup label="男性">
-          <option value="longxiaobai">小白·沉稳</option>
-          <option value="longshu">书生·儒雅</option>
-          <option value="longshuo">小硕·清朗</option>
-          <option value="longlaotie">老铁·浑厚</option>
-        </optgroup>
-        <optgroup label="日本語">
-          <option value="loongtomoka_v3">Tomoka·日語♀</option>
-          <option value="loongriko_v3">Riko·二次元♀</option>
-        </optgroup>
-        <optgroup label="English">
-          <option value="loongstella">Stella·EN♀</option>
-          <option value="loongbella">Bella·EN♀</option>
-        </optgroup>
-        <optgroup label="特色">
-          <option value="longjielidou">杰力豆·童声</option>
-          <option value="loongkyong_v3">Kyong·한국어♀</option>
-        </optgroup>
-      </select>
+      <!-- 声音选择は伴侣管理画面(ai-meta)へ移設したため内嵌控制条からは削除。
+           声音切替の実体(voice_change WS / reconnectWithVoice)は残置(将来再利用可)。 -->
 
-      <!-- Start / End session -->
+      <!-- 数字人形象 ON/OFF(Qwen 音声対話は常時維持。このボタンは avatar のみを制御) -->
       ${state.isConnected
         ? html`
             <button
-              class="dh-btn danger"
-              @click=${state.onStop}
-              aria-label=${t("dh.endSession")}
+              class="dh-btn ${state.avatarActive ? "danger" : "primary"}"
+              @click=${state.onToggleAvatar}
+              aria-pressed=${state.avatarActive ? "true" : "false"}
+              aria-label=${t(state.avatarActive ? "dh.avatarStop" : "dh.avatarStart")}
+              title=${t(state.avatarActive ? "dh.avatarStop" : "dh.avatarStart")}
             >
-              <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
-                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-              </svg>
-              <span class="dh-btn-label">${t("dh.endSession")}</span>
+              ${state.avatarActive
+                ? html`<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                  </svg>`
+                : html`<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+                    <path d="M12 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10z"/>
+                    <path d="M3 22a9 9 0 0 1 18 0"/>
+                  </svg>`}
+              <span class="dh-btn-label">${t(state.avatarActive ? "dh.avatarStop" : "dh.avatarStart")}</span>
             </button>
           `
         : html`
@@ -325,8 +325,7 @@ export function renderDigitalHumanPanel(state: DHPanelState) {
           : nothing}
       </div>
 
-      <!-- Subtitle area -->
-      ${renderSubtitle(state)}
+      <!-- Subtitle area removed (ユーザ要望 2026-07-07: 内嵌数字人画面の下方字幕を非表示) -->
 
       <!-- Control toolbar -->
       ${renderControls(state)}

@@ -127,3 +127,11 @@ nul
 releases/*.exe
 apps/windows/publish/*.exe
 apps/windows/publish-fd/*.exe
+
+# Credentials (NEVER COMMIT) — added 2026-07-08
+*.git-credentials
+.git-credentials
+*github-push*credentials*
+# tgz backups (junk)
+*.tgz.bak
+*.tgz.bak.*

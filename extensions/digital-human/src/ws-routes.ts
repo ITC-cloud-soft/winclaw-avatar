@@ -185,6 +185,8 @@ export type InboundMessage =
   | { type: "video"; data: string }
   | { type: "text"; text: string }
   | { type: "musetalk_offer"; data: { sdp: string; webrtcId: string } }
+  | { type: "avatar_pause" }
+  | { type: "avatar_resume" }
   | { type: "ping" }
   | { type: "stop" };
 
@@ -231,6 +233,12 @@ export function parseInboundMessage(raw: unknown): InboundMessage | null {
       }
       return null;
     }
+
+    case "avatar_pause":
+      return { type: "avatar_pause" };
+
+    case "avatar_resume":
+      return { type: "avatar_resume" };
 
     case "ping":
       return { type: "ping" };

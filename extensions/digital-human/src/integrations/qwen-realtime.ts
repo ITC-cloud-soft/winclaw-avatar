@@ -725,6 +725,24 @@ export class QwenRealtimeClient extends EventEmitter {
   }
 
   /**
+   * O4 会話保活(dh-voice-control-everything-plan §2.3 O4): 長タスク実行中の静默で
+   * DashScope の `response_idle_timeout`(既定 ~300s)による切断を防ぐ。
+   *
+   * WS 層の `ws.ping()`(_startPingLoop)は伝送層のみ保活し、DashScope の**応用層** idle
+   * 計時をリセットしない疑いが強い。そこで応用層イベント `session.update`(現行 instructions を
+   * そのまま再送する **no-op**)を送る。session.update は会話ターンを作らず avatar を喋らせ
+   * ないため、保活として安全(response.create と違い割込みしない)。未接続時は no-op。
+   *
+   * @returns 送信できたら true、未接続で送れなければ false。
+   */
+  sendKeepAlive(): boolean {
+    if (!this._isConnected || !this._ws) return false;
+    // 現行 instructions を再送(内容不変=会話に影響しない no-op の応用層イベント)。
+    this._sendSessionUpdate({ instructions: this._currentInstructions });
+    return true;
+  }
+
+  /**
    * Send a function-call result back to the model and request a new response.
    *
    * @param callId - The `callId` from the {@link QwenFunctionCall} received on

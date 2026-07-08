@@ -6,7 +6,6 @@ import { refreshChatAvatar } from "./app-chat.ts";
 import { renderChatControls } from "./app-render.helpers.ts";
 import { renderCommandPalette } from "./components/command-palette.ts";
 import { renderSessionTabs } from "./components/session-tabs.ts";
-import { renderStatusBar } from "./components/status-bar.ts";
 import { loadAgentFileContent, loadAgentFiles, saveAgentFile } from "./controllers/agent-files.ts";
 import { loadAgentIdentities, loadAgentIdentity } from "./controllers/agent-identity.ts";
 import { loadAgentSkills } from "./controllers/agent-skills.ts";
@@ -55,6 +54,7 @@ import {
 } from "./controllers/skills.ts";
 import { loadUsage, loadSessionTimeSeries, loadSessionLogs } from "./controllers/usage.ts";
 import { DHSessionController } from "./dh-session-controller.ts";
+import { DH_DEFAULT_VOICE } from "./views/digital-human.ts";
 import { icons } from "./icons.ts";
 import { COMMANDS, normalizeBasePath, subtitleForTab, titleForTab } from "./navigation.ts";
 import { generateUUID } from "./uuid.ts";
@@ -90,6 +90,228 @@ import { renderUsage } from "./views/usage.ts";
 
 const AVATAR_DATA_RE = /^data:/i;
 const AVATAR_HTTP_RE = /^https?:\/\//i;
+
+/**
+ * Detail carried by the `dh-ui-action` DOM event (dispatched by
+ * `dh-websocket.ts` when Qwen calls the `ui_action` tool). Sprint D voice UI
+ * control — see `docs/dh-voice-control-everything-plan.md` §3.
+ */
+interface DhUiActionDetail {
+  target: string;
+  action: string;
+  name?: string;
+}
+
+/** True once the module-level `dh-ui-action` listener has been bound. */
+let dhUiActionListenerBound = false;
+
+/**
+ * Bind a one-shot `window` listener that turns a `dh-ui-action` event into the
+ * matching existing UI behaviour. Registered lazily from {@link renderApp} so
+ * it captures a live {@link AppViewState}; the {@link dhUiActionListenerBound}
+ * guard keeps re-renders from stacking duplicate listeners.
+ *
+ * Dispatch table (target → existing handler / state):
+ *   - artifact   → re-dispatch `dh-ui-artifact` ({name}) for the secretary panel
+ *   - task_panel → toggle `state.dhTaskPanelOpen`
+ *   - controls   → toggle `state.dhControlsVisible`
+ *   - mic        → controller mic toggle (mirrors `onToggleMic`)
+ *   - camera     → controller camera toggle (mirrors `onToggleCamera`)
+ *   - avatar     → controller `toggleAvatar` (mirrors `onToggleAvatar`)
+ */
+function ensureDhUiActionListener(state: AppViewState): void {
+  if (dhUiActionListenerBound) return;
+  dhUiActionListenerBound = true;
+
+  window.addEventListener("dh-ui-action", (ev: Event) => {
+    const detail = (ev as CustomEvent<DhUiActionDetail>).detail;
+    if (!detail || typeof detail.target !== "string") return;
+    const { target, action, name } = detail;
+
+    // `hide`/`close`/`off` force the closed/off state; `show`/`open`/`on`
+    // force open/on; `toggle` (or anything else) flips. Devices (mic/camera/
+    // avatar) reuse the controller's own toggle, so we only translate the
+    // explicit on/off intents where the controller exposes a plain toggle.
+    const wantsClose = action === "hide" || action === "close" || action === "off";
+    const wantsOpen = action === "show" || action === "open" || action === "on";
+
+    // ★职责拆分(修 medium: 双 listener 重叠): app-render **只**负责需要 controller
+    // 的设备类 mic/camera/avatar。artifact/task_panel/controls 由 main-layout 的
+    // dh-ui-action listener 独占(CSS 类切换才真正生效;artifact 只 dispatch 一次)。
+    // 避免 artifact 双触发 + task_panel/controls 的死 state 写入。
+    switch (target) {
+      case "mic": {
+        toggleDhMic(state, wantsClose ? false : wantsOpen ? true : undefined);
+        break;
+      }
+      case "camera": {
+        toggleDhCamera(state, wantsClose ? false : wantsOpen ? true : undefined);
+        break;
+      }
+      case "avatar": {
+        toggleDhAvatar(state, wantsClose ? false : wantsOpen ? true : undefined);
+        break;
+      }
+      case "subtitle": {
+        // 字幕(dh-subtitle)の展開/折畳。state 駆動(Lit 再レンダで class 反映)。
+        state.dhSubtitleVisible = wantsClose ? false : wantsOpen ? true : !(state.dhSubtitleVisible ?? true);
+        break;
+      }
+      case "voice": {
+        // 音色切替。name に話者/特徴/言語(例「活泼」「日語」「小夏」)を載せる。
+        if (name) setDhVoice(state, name);
+        break;
+      }
+      case "task_continue": {
+        // 特定タスク番号への継続指示。name = JSON {seq, text}。secretary-panel が
+        // 該当タスクを user_seq で解決し POST /tasks/{id}/messages する。
+        if (name) {
+          window.dispatchEvent(
+            new CustomEvent("dh-ui-task-continue", { detail: { payload: name } }),
+          );
+        }
+        break;
+      }
+      case "task_artifact": {
+        // 特定タスク番号の成果物を開く。name = JSON {seq, query}。secretary-panel が
+        // 該当タスクを解決→artifacts 取得→query で選び openPreview する。
+        if (name) {
+          window.dispatchEvent(
+            new CustomEvent("dh-ui-task-artifact", { detail: { payload: name } }),
+          );
+        }
+        break;
+      }
+      case "music": {
+        // 語音点歌(内蔵 music bundle・docs/20)。action=play(name=JSON{playUrl,
+        // title,artist,cover,loop})/pause/stop。secretary-panel の音乐カードが受けて
+        // <audio> を制御する。疎結合に DOM イベントで流す。
+        window.dispatchEvent(
+          new CustomEvent("dh-ui-music", { detail: { action, payload: name } }),
+        );
+        break;
+      }
+      // artifact / task_panel / controls / fullscreen: main-layout が担当(此処では無視)。
+      case "artifact":
+      case "task_panel":
+      case "controls":
+      case "fullscreen":
+        break;
+      default:
+        console.debug("[dh-ui-action] Unknown target:", target);
+        break;
+    }
+  });
+}
+
+/**
+ * Toggle the DH microphone via the live controller (mirrors the `onToggleMic`
+ * render handler). When `want` is provided, only acts if the current state
+ * differs, so `on`/`off` are idempotent; when omitted, always flips.
+ */
+function toggleDhMic(state: AppViewState, want?: boolean): void {
+  const cur = state.dhMicEnabled ?? false;
+  if (want !== undefined && want === cur) return;
+  const next = !cur;
+  state.dhMicEnabled = next;
+  try {
+    const win = window as unknown as Record<string, unknown>;
+    const ctrl = win.__dhController as Record<string, unknown> | null;
+    if (ctrl) {
+      for (const val of Object.values(ctrl)) {
+        if (val && typeof val === "object" && "setMuted" in (val as Record<string, unknown>)) {
+          (val as { setMuted: (m: boolean) => void }).setMuted(!next);
+          break;
+        }
+      }
+    }
+  } catch (e) {
+    console.error("[Mic] Voice-action toggle error:", e);
+  }
+}
+
+/**
+ * Toggle the DH camera via the live controller (mirrors `onToggleCamera`).
+ * Idempotent when `want` is provided.
+ */
+function toggleDhCamera(state: AppViewState, want?: boolean): void {
+  const cur = state.dhCameraEnabled ?? false;
+  if (want !== undefined && want === cur) return;
+  try {
+    const win = window as unknown as Record<string, unknown>;
+    const ctrl = win.__dhController as { toggleCamera?: () => boolean } | null;
+    if (!ctrl || typeof ctrl.toggleCamera !== "function") {
+      console.warn("[Camera] Controller not ready — start a DH session first");
+      return;
+    }
+    state.dhCameraEnabled = ctrl.toggleCamera();
+  } catch (err) {
+    console.error("[Camera] Voice-action toggle failed:", err);
+    state.dhCameraEnabled = false;
+  }
+}
+
+/**
+ * Toggle the DH avatar (数字人形象) via the live controller (mirrors
+ * `onToggleAvatar`). Idempotent when `want` is provided so voice `on`/`off`
+ * don't double-flip when both the deterministic fallback and Qwen fire.
+ */
+function toggleDhAvatar(state: AppViewState, want?: boolean): void {
+  const cur = state.dhAvatarActive ?? false;
+  if (want !== undefined && want === cur) return;
+  const win = window as unknown as Record<string, unknown>;
+  const ctrl = win.__dhController as { toggleAvatar?: () => boolean } | null;
+  if (!ctrl || typeof ctrl.toggleAvatar !== "function") {
+    console.warn("[Avatar] Controller not ready — Qwen セッション未接続");
+    return;
+  }
+  state.dhAvatarActive = ctrl.toggleAvatar();
+}
+
+/**
+ * 語音の音色名 → Qwen realtime voiceId 対応。控制条ドロップダウン(digital-human.ts の
+ * {@link DH_VOICE_OPTIONS})と同じ Qwen 音色に当てる。話者名(Serena/Ethan)・
+ * 特徴(温柔/沉稳)・性別(女声/男声)・言語(英語)いずれの言い方でも当たるよう各 id に
+ * 別名群を持たせる(性別だけ言われた時は既定の女声/男声に寄せる)。
+ */
+const DH_VOICE_ALIASES: ReadonlyArray<{ id: string; alias: RegExp }> = [
+  // 女声 (female)
+  { id: "Cherry", alias: /cherry|年轻|年輕|活泼|活潑/i },
+  { id: "Chelsie", alias: /chelsie|明亮/i },
+  { id: "Bella", alias: /bella/i },
+  { id: "Aria", alias: /aria/i },
+  // 「女声/温柔/默认」など汎称は既定女声 Serena に寄せる(最後に総括で拾う)
+  { id: "Serena", alias: /serena|温柔|溫柔|温暖|溫暖|默认|默認|女声|女聲|女性|female/i },
+  // 男声 (male)
+  { id: "River", alias: /river|浑厚|渾厚/i },
+  { id: "Cove", alias: /cove|冷静|冷靜/i },
+  { id: "Daniel", alias: /daniel/i },
+  { id: "Frank", alias: /frank|低沉/i },
+  // 「男声/沉稳」など汎称は既定男声 Ethan に寄せる
+  { id: "Ethan", alias: /ethan|沉稳|沉穩|男声|男聲|男性|male/i },
+];
+
+/**
+ * 語音での音色切替(control-bar のドロップダウンと同一の副作用 = Tier 2 実時再接続)。
+ * 認識した Qwen 音色 id を state/window に記録し、生きている DH controller があれば
+ * `setVoice` で `voice_change` を送って realtime を張り直す(次の一句から新声)。
+ */
+function setDhVoice(state: AppViewState, spoken: string): void {
+  const hit = DH_VOICE_ALIASES.find((v) => v.alias.test(spoken));
+  if (!hit) {
+    console.debug("[Voice] no voice matched for:", spoken);
+    return;
+  }
+  (state as unknown as Record<string, string>).dhSelectedVoice = hit.id;
+  (window as unknown as Record<string, unknown>).__dhSelectedVoice = hit.id;
+  const ctrl = (window as unknown as Record<string, unknown>).__dhController as
+    | { setVoice?: (v: string) => boolean }
+    | null;
+  if (ctrl && typeof ctrl.setVoice === "function") {
+    ctrl.setVoice(hit.id);
+  }
+  console.info("[Voice] Voice-action set voice:", hit.id);
+}
 
 /** Create a new chat session with a unique UUID-based key and add it to open tabs. */
 async function createNewChatSession(state: AppViewState) {
@@ -230,6 +452,10 @@ function buildMainLayoutState(
               onThinkingChange: (thinking) => {
                 state.dhIsThinking = thinking;
               },
+              onAvatarActiveChange: (active) => {
+                // avatar(数字人形象)の起動/停止状態。Qwen 対話とは独立。
+                state.dhAvatarActive = active;
+              },
             });
 
             state.dhController = controller;
@@ -265,6 +491,21 @@ function buildMainLayoutState(
         } else {
           state.dhConnectionStatus = "disconnected";
         }
+      },
+      // 数字人形象(avatar)の起動/停止のみ。Qwen 音声対話(WS+マイク)は維持する。
+      avatarActive: state.dhAvatarActive ?? false,
+      onToggleAvatar: () => {
+        const win = window as unknown as Record<string, unknown>;
+        const ctrl = win.__dhController as
+          | { toggleAvatar?: () => boolean }
+          | null;
+        if (!ctrl || typeof ctrl.toggleAvatar !== "function") {
+          console.warn("[Avatar] Controller not ready — Qwen セッション未接続");
+          return;
+        }
+        // toggleAvatar() は意図した新状態(表示=true/停止=false)を返す。
+        // 実描画は onAvatarActiveChange で確定するが、即時反映でボタンのちらつきを防ぐ。
+        state.dhAvatarActive = ctrl.toggleAvatar();
       },
       onToggleMic: () => {
         const next = !(state.dhMicEnabled ?? false);
@@ -321,11 +562,22 @@ function buildMainLayoutState(
           }
         }
       },
-      selectedVoice: (state as unknown as Record<string, string>).dhSelectedVoice ?? "longxiaochun",
+      selectedVoice: (state as unknown as Record<string, string>).dhSelectedVoice ?? DH_DEFAULT_VOICE,
       onVoiceChange: (voiceId: string) => {
         (state as unknown as Record<string, string>).dhSelectedVoice = voiceId;
-        // Store on window so backend can read it
+        // Store on window (voice-action fallback + diagnostics can read it).
         (window as unknown as Record<string, unknown>).__dhSelectedVoice = voiceId;
+        // Tier 2: live-switch the Qwen realtime voice — the controller sends a
+        // `voice_change` command over the DH WS and the node re-connects the
+        // realtime session with the new voice (next spoken turn uses it).
+        const ctrl = (window as unknown as Record<string, unknown>).__dhController as
+          | { setVoice?: (v: string) => boolean }
+          | null;
+        if (ctrl && typeof ctrl.setVoice === "function") {
+          ctrl.setVoice(voiceId);
+        } else {
+          console.warn("[Voice] Controller not ready — start a DH session first");
+        }
       },
     },
     chatPanel: {
@@ -413,7 +665,31 @@ function resolveChatSessionTitle(state: AppViewState): string | undefined {
   return row?.derivedTitle || row?.displayName || row?.label || undefined;
 }
 
+/**
+ * ロード時 auto-connect(docs/10 §4.2): DH 画面に入ったら自動で Qwen セッションを接続する
+ * (画面に入れば即対話可能に)。マイクは権限許可済なら即 ON、未許可時はブラウザが1ジェスチャを
+ * 要求する場合がある。初回1回だけ。onStart 本体(ボタンと同一経路)を再利用する。
+ */
+function maybeAutoStartDh(state: AppViewState, ls: MainLayoutState): MainLayoutState {
+  const st = state.dhConnectionStatus ?? "disconnected";
+  if (!state.dhAutoStartAttempted && !state.dhController && st === "disconnected") {
+    state.dhAutoStartAttempted = true;
+    queueMicrotask(() => {
+      try {
+        ls.dhPanel.onStart();
+      } catch {
+        /* noop */
+      }
+    });
+  }
+  return ls;
+}
+
 export function renderApp(state: AppViewState) {
+  // Bind the voice UI-control listener once (Sprint D). Lazy so it captures a
+  // live state; guarded internally against duplicate registration.
+  ensureDhUiActionListener(state);
+
   const presenceCount = state.presenceEntries.length;
   const sessionsCount = state.sessionsResult?.count ?? null;
   const cronNext = state.cronStatus?.nextWakeAtMs ?? null;
@@ -1329,7 +1605,7 @@ export function renderApp(state: AppViewState) {
 
         ${
           isDH && state.dhAvailable
-            ? renderMainLayout(buildMainLayoutState(state, () => void createNewChatSession(state)))
+            ? renderMainLayout(maybeAutoStartDh(state, buildMainLayoutState(state, () => void createNewChatSession(state))))
             : nothing
         }
 
@@ -1524,17 +1800,7 @@ export function renderApp(state: AppViewState) {
             : nothing
         }
       </main>
-      <footer class="statusbar">
-        ${renderStatusBar({
-          connected: state.connected,
-          channels: state.channelsSnapshot,
-          totalCost: state.usageCostSummary?.totals?.totalCost ?? null,
-          expanded: state.statusBarExpanded,
-          onToggle: () => {
-            state.statusBarExpanded = !state.statusBarExpanded;
-          },
-        })}
-      </footer>
+      <!-- statusbar footer 削除（ユーザ要望 2026-07-07: 「Gateway: OK」状態条を非表示） -->
       ${renderCommandPalette({
         open: state.commandPaletteOpen,
         recentCommandIds: state.recentCommands,

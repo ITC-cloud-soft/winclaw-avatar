@@ -12,7 +12,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Layer 1: System packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash ca-certificates curl git gosu jq tini tmux \
-    python3-minimal python3-pip python3-venv \
+    python3-minimal python3-pip python3-venv python-is-python3 \
   && apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 # Layer 2: Install winclaw + ClawTeam (single RUN, cleanup caches)
@@ -22,6 +22,10 @@ RUN npm install -g /tmp/winclaw.tgz \
   && pip3 install --no-cache-dir --break-system-packages /tmp/clawteam \
   && rm -rf /tmp/winclaw.tgz /tmp/clawteam \
   && npm cache clean --force && rm -rf /root/.npm /root/.cache
+
+# Layer 2.2: Python doc-extract dependencies (PDF/PPTX/DOCX/XLSX parsing)
+RUN pip3 install --break-system-packages --no-cache-dir \
+    PyMuPDF python-pptx python-docx openpyxl
 
 # Layer 2.5: Install MetaCoder (43MB Linux standalone binary - no Bun runtime needed)
 COPY docker/metacoder-1.0.5-linux-x64.tar.gz /tmp/metacoder.tar.gz
@@ -39,6 +43,11 @@ RUN sed -i "s/\r$//" /usr/local/bin/metacoder-wrapper.sh && chmod +x /usr/local/
 RUN useradd -m -s /bin/bash winclaw \
   && mkdir -p /home/winclaw/.winclaw /home/winclaw/.metacoder \
   && chown -R winclaw:winclaw /home/winclaw
+
+# Note: metacoder skills (doc-extract / research) now ship INSIDE the winclaw npm
+# package (skills/ is bundled in the tarball) and are provisioned at runtime by
+# entrypoint-node.sh into /home/winclaw/.metacoder/skills + <workspace>/.claude/skills.
+# No COPY needed here — that keeps the skill present regardless of build path.
 
 # Layer 4: Entrypoint
 COPY docker/entrypoint-node.sh /usr/local/bin/entrypoint-node.sh

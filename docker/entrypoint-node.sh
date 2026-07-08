@@ -125,6 +125,20 @@ CONFIG_JSON=$(jq -n \
         enabled: true
       }
     },
+    skills: {
+      load: {
+        extraDirs: [
+          "/home/winclaw/.metacoder/skills",
+          "/home/winclaw/.winclaw/workspace/.claude/skills",
+          "/home/winclaw/.winclaw/workspace/skills"
+        ],
+        watch: true
+      },
+      // 自我进化(方案D ⑥防泛滥): skill 会随秘书自建而增多。开 dynamicFilter
+      // 按相关性动态选入 prompt,并设上限,避免 skill 多了撑爆 prompt。
+      limits: { maxSkillsInPrompt: 80, maxSkillsPromptChars: 60000 },
+      dynamicFilter: { mode: "auto" }
+    },
     grc: {
       enabled: true,
       url: $grc_url,
@@ -149,6 +163,7 @@ if [ -f "${PERSIST_DIR}/winclaw.json" ]; then
     .[0] + {
       models: (.[1].models // {}),
       tools: (.[1].tools // .[0].tools),
+      plugins: (.[1].plugins // .[0].plugins),
       gateway: (.[0].gateway),
       grc: (.[0].grc)
     }
@@ -224,6 +239,34 @@ if [ -n "${GRC_URL}" ]; then
     echo "[entrypoint] ⚠ GRC not reachable after 60s, starting gateway anyway (will retry in background)"
   fi
 fi
+
+# ── Provision metacoder skills (doc-extract / research) ─────────────────────
+# These ship INSIDE the winclaw package (skills/ is bundled in the npm tarball,
+# so every node image has them at <winclaw>/skills regardless of which Dockerfile
+# built it). We mirror them into:
+#   1. /home/winclaw/.metacoder/skills  — the engine's user skills dir
+#      (CLAUDE_CONFIG_DIR=/home/winclaw/.metacoder; also skills.load.extraDirs).
+#   2. <workspace>/.claude/skills        — so the AGENTS.md workspace-relative call
+#      'python .claude/skills/doc-extract/extract.py' resolves (coding turn cwd=workspace).
+# Idempotent: cp -rn won't clobber; mkdir -p is safe to repeat.
+WINCLAW_PKG_SKILLS="$(npm root -g 2>/dev/null)/winclaw/skills"
+[ -d "${WINCLAW_PKG_SKILLS}" ] || WINCLAW_PKG_SKILLS="/usr/local/lib/node_modules/winclaw/skills"
+mkdir -p /home/winclaw/.metacoder/skills "${WINCLAW_DIR}/workspace/.claude/skills"
+# These two skills are IMAGE-MANAGED: force-refresh them every start (rm -rf + cp)
+# so a persisted/mounted stale copy can't shadow the version shipped in the image.
+# Only doc-extract/research/skill-creator are touched — other user skills left alone.
+# skill-creator: Anthropic 官方元 skill。秘书用它创建新 skill(docs/dh-secretary-
+# skill-creator-pipeline.md)。winclaw 用其「创建+校验+打包」子集(eval/优化依赖
+# claude CLI/browser,在 winclaw 不可用)。
+for s in doc-extract research skill-creator; do
+  if [ -d "${WINCLAW_PKG_SKILLS}/${s}" ]; then
+    rm -rf "/home/winclaw/.metacoder/skills/${s}"
+    cp -r "${WINCLAW_PKG_SKILLS}/${s}" /home/winclaw/.metacoder/skills/ 2>/dev/null || true
+    rm -rf "${WINCLAW_DIR}/workspace/.claude/skills/${s}"
+    cp -r "${WINCLAW_PKG_SKILLS}/${s}" "${WINCLAW_DIR}/workspace/.claude/skills/" 2>/dev/null || true
+  fi
+done
+chown -R winclaw:winclaw /home/winclaw/.metacoder/skills "${WINCLAW_DIR}/workspace/.claude" 2>/dev/null || true
 
 # ── Start Gateway ────────────────────────────────────────────────────────────
 echo "[entrypoint] Starting winclaw gateway on port ${GW_PORT} (bind: ${GW_BIND})..."

@@ -1,0 +1,31 @@
+<svg viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="winclaw-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0ea5e9"/>
+      <stop offset="50%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#8b5cf6"/>
+    </linearGradient>
+    <linearGradient id="claw-accent" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#818cf8"/>
+    </linearGradient>
+  </defs>
+  <!-- Background circle -->
+  <circle cx="60" cy="60" r="56" fill="url(#winclaw-gradient)" opacity="0.15"/>
+  <circle cx="60" cy="60" r="56" stroke="url(#winclaw-gradient)" stroke-width="2.5" fill="none"/>
+  <!-- Left claw -->
+  <path d="M28 58 C18 48 16 34 26 26 C30 22 36 22 38 28 L42 42 C44 48 40 52 36 54 Z" fill="url(#winclaw-gradient)"/>
+  <path d="M26 26 C22 20 26 14 32 16 C38 18 36 24 32 26" stroke="url(#claw-accent)" stroke-width="3" stroke-linecap="round" fill="none"/>
+  <!-- Right claw -->
+  <path d="M92 58 C102 48 104 34 94 26 C90 22 84 22 82 28 L78 42 C76 48 80 52 84 54 Z" fill="url(#winclaw-gradient)"/>
+  <path d="M94 26 C98 20 94 14 88 16 C82 18 84 24 88 26" stroke="url(#claw-accent)" stroke-width="3" stroke-linecap="round" fill="none"/>
+  <!-- Body / shield shape -->
+  <path d="M40 50 C40 40 48 32 60 32 C72 32 80 40 80 50 L80 72 C80 86 72 96 60 96 C48 96 40 86 40 72 Z" fill="url(#winclaw-gradient)"/>
+  <!-- W mark -->
+  <path d="M48 56 L52 76 L58 64 L60 64 L62 64 L68 76 L72 56" stroke="white" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <!-- Eyes -->
+  <circle cx="52" cy="48" r="3" fill="white" opacity="0.9"/>
+  <circle cx="68" cy="48" r="3" fill="white" opacity="0.9"/>
+  <circle cx="52.5" cy="47.5" r="1.5" fill="#0f172a"/>
+  <circle cx="68.5" cy="47.5" r="1.5" fill="#0f172a"/>
+</svg>

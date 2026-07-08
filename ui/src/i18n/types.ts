@@ -227,6 +227,49 @@ export interface LocaleMessages {
     instances: string;
   };
 
+  /** 数字人秘书面板(ai-meta 内嵌 chat 右区 3 段)。 */
+  secretary: {
+    disabledTitle: string;
+    disabledHint: string;
+    dialogTitle: string;
+    subtitlePlaceholder: string;
+    tasksTitle: string;
+    noTasks: string;
+    artifactsRunning: string;
+    artifactsEmpty: string;
+    continuePlaceholder: string;
+    send: string;
+    sending: string;
+    slotTitle: string;
+    dropHint: string;
+    uploading: string;
+    noSlots: string;
+    fromAlbum: string;
+    startCamera: string;
+    /** "{count} files" — interpolated. */
+    fileCount: string;
+    addFiles: string;
+    deleteSlot: string;
+    slotInUse: string;
+    deleteFile: string;
+    preview: string;
+    download: string;
+    previewUnsupported: string;
+    close: string;
+    badgeDone: string;
+    badgeError: string;
+    badgeRunning: string;
+    badgeIdle: string;
+    errLoadSlots: string;
+    errLoadTasks: string;
+    errUpload: string;
+    errDownload: string;
+    errPreview: string;
+    errDelete: string;
+    errContinue: string;
+    noArtifactYet: string;
+  };
+
   personal: {
     /** Page heading for the personal info view */
     title: string;

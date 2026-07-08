@@ -1677,6 +1677,71 @@ export async function runEmbeddedAttempt(
         // Use session state (not subscription) for snapshot decisions - need instantaneous compaction status
         const wasCompactingBefore = activeSession.isCompacting;
         const snapshot = activeSession.messages.slice();
+        // ③ metacoder(ported engine)経由の返信を winclaw transcript に永続化する。
+        // ported エンジンは自身の ~/.claude 側にしか書かず sessionManager を参照しない
+        // ため、これが無いと chat.history が空になり webchat に何も表示されず
+        // 「タスク入力→エラー→新セッション」に見える。routedToMetaCoder のターンのみ。
+        if (sessionManager && routedToMetaCoder && !promptError) {
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const __mcAsst = (snapshot.slice().reverse() as any[]).find(
+              (mm) =>
+                mm &&
+                mm.role === "assistant" &&
+                Array.isArray(mm.content) &&
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                mm.content.some(
+                  (b: any) =>
+                    b && b.type === "text" && typeof b.text === "string" && b.text.trim(),
+                ),
+            );
+            let __mcText = __mcAsst
+              ? __mcAsst.content
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  .filter((b: any) => b && b.type === "text")
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  .map((b: any) => b.text)
+                  .join("\n")
+                  .trim()
+              : "";
+            if (!__mcText && Array.isArray(assistantTexts)) {
+              __mcText = assistantTexts.join("\n").trim();
+            }
+            sessionManager.appendMessage({
+              role: "user",
+              content: [{ type: "text", text: effectivePrompt }],
+              timestamp: Date.now(),
+            });
+            if (__mcText) {
+              sessionManager.appendMessage({
+                role: "assistant",
+                content: [{ type: "text", text: __mcText }],
+                api: "anthropic-messages",
+                provider: "winclaw",
+                model: "metacoder",
+                usage: {
+                  input: 0,
+                  output: 0,
+                  cacheRead: 0,
+                  cacheWrite: 0,
+                  totalTokens: 0,
+                  cost: {
+                    input: 0,
+                    output: 0,
+                    cacheRead: 0,
+                    cacheWrite: 0,
+                    total: 0,
+                  },
+                },
+                stopReason: "stop",
+                timestamp: Date.now(),
+              });
+            }
+            log.info(`[metacoder] persisted transcript: chars=${__mcText.length}`);
+          } catch (e) {
+            log.warn(`[metacoder] transcript persist failed: ${String(e)}`);
+          }
+        }
         const wasCompactingAfter = activeSession.isCompacting;
         // Only trust snapshot if compaction wasn't running before or after capture
         const preCompactionSnapshot = wasCompactingBefore || wasCompactingAfter ? null : snapshot;

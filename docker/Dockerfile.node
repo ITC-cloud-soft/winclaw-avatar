@@ -12,7 +12,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Layer 1: System packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash ca-certificates curl git gosu jq tini tmux \
-    python3-minimal python3-pip python3-venv \
+    python3-minimal python3-pip python3-venv python-is-python3 \
   && apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 # Layer 2: Install winclaw + ClawTeam (single RUN, cleanup caches)
@@ -22,6 +22,9 @@ RUN npm install -g /tmp/winclaw.tgz \
   && pip3 install --no-cache-dir --break-system-packages /tmp/clawteam \
   && rm -rf /tmp/winclaw.tgz /tmp/clawteam \
   && npm cache clean --force && rm -rf /root/.npm /root/.cache
+
+# Layer 2.6: doc-extract python deps (PDF/PPTX/Word/Excel extraction for the doc-extract skill)
+RUN pip3 install --break-system-packages --no-cache-dir PyMuPDF python-pptx python-docx openpyxl
 
 # Layer 2.5: Install MetaCoder (43MB Linux standalone binary - no Bun runtime needed)
 COPY docker/metacoder-1.0.5-linux-x64.tar.gz /tmp/metacoder.tar.gz

@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<!--
+  pdf-report 固定テンプレート(O1 技能化)。占位: {{title}} {{subtitle}} {{sections}}。
+  ai-meta ブランド(暖粉→薰衣草グラデ + 暗色見出し)に寄せた読みやすい報告書スタイル。
+  render.py が文字列置換で注入する(外部フォント/画像なし=オフライン確定描画)。
+-->
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<style>
+  :root {
+    --pink: #F0759B; --coral: #FF8A65; --lav: #8B78D6;
+    --ink: #1a1526; --mut: #6b6480; --line: #e7e2f0; --soft: #faf8fd;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: "Noto Sans SC", "Noto Sans CJK SC", "Microsoft YaHei", "Hiragino Sans", sans-serif;
+    color: var(--ink); font-size: 13px; line-height: 1.75;
+  }
+  .cover {
+    background: linear-gradient(135deg, var(--coral), var(--pink) 55%, var(--lav));
+    color: #fff; padding: 40px 44px 32px; border-radius: 0 0 18px 18px;
+  }
+  .cover h1 { margin: 0; font-size: 27px; font-weight: 800; letter-spacing: .3px; }
+  .cover .sub { margin-top: 10px; font-size: 13px; opacity: .92; }
+  main { padding: 26px 44px 40px; }
+  section { margin-bottom: 22px; break-inside: avoid; }
+  h2 {
+    font-size: 16px; font-weight: 700; margin: 0 0 10px;
+    padding-left: 11px; border-left: 4px solid var(--pink); color: var(--ink);
+  }
+  p { margin: 0 0 9px; }
+  ul { margin: 4px 0 10px; padding-left: 20px; }
+  li { margin: 3px 0; }
+  table { width: 100%; border-collapse: collapse; margin: 8px 0 12px; font-size: 12.5px; }
+  th, td { border: 1px solid var(--line); padding: 7px 10px; text-align: left; }
+  thead th { background: var(--soft); color: var(--lav); font-weight: 700; }
+  tbody tr:nth-child(even) td { background: #fcfbfe; }
+  .foot { margin-top: 26px; padding-top: 12px; border-top: 1px solid var(--line);
+          color: var(--mut); font-size: 11px; text-align: center; }
+</style>
+</head>
+<body>
+  <div class="cover">
+    <h1>{{title}}</h1>
+    <div class="sub">{{subtitle}}</div>
+  </div>
+  <main>
+    {{sections}}
+    <div class="foot">本报告由数字人秘书 · pdf-report 确定性流水线生成</div>
+  </main>
+</body>
+</html>

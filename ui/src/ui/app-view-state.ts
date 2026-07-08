@@ -322,6 +322,20 @@ export type AppViewState = {
   dhController?: import('./dh-session-controller.ts').DHSessionController;
   /** Whether the DH plugin is available (health probe succeeded). */
   dhAvailable?: boolean;
+  /** ロード時 auto-connect を1回だけ試みたか(docs/10 §4.2)。 */
+  dhAutoStartAttempted?: boolean;
+  /** avatar(数字人形象)が現在表示中か(オンデマンド・ライフサイクル)。 */
+  dhAvatarActive?: boolean;
+  /**
+   * 秘书面板(任务管理区)の開閉(§4.5)。PC=右サイドバー表示切替、手机=底部 sheet の弾出。
+   * 既定は false(隠す)= stage を主役に。ui_action(task_panel) / ボタンで切替。
+   */
+  dhTaskPanelOpen?: boolean;
+  /**
+   * 悬浮控制条の表示切替(§4.2/§4.5)。既定は true(表示)。
+   * false で数字人を完全表示。ui_action(controls) / 把手ボタンで切替。
+   */
+  dhControlsVisible?: boolean;
 
   // Command palette & session tabs
   commandPaletteOpen: boolean;

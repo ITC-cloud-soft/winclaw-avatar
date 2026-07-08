@@ -100,6 +100,28 @@ interface IncomingMessage {
   [key: string]: unknown;
 }
 
+/**
+ * Parse a tool-call `args` payload into a plain object.
+ *
+ * `realtime-handler` forwards Qwen's `argumentsJson` — normally a JSON string,
+ * but a defensive `object`/`undefined` path is kept so a backend change that
+ * pre-parses can't break UI dispatch. Malformed input yields `{}`.
+ */
+function parseToolArgs(raw: unknown): Record<string, unknown> {
+  if (raw && typeof raw === 'object') return raw as Record<string, unknown>;
+  if (typeof raw === 'string' && raw.trim()) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      /* malformed → empty */
+    }
+  }
+  return {};
+}
+
 // ---------------------------------------------------------------------------
 // DHWebSocket
 // ---------------------------------------------------------------------------
@@ -147,7 +169,38 @@ export class DHWebSocket {
     this.isManualClose = false;
     this.reconnectAttempts = 0;
 
+    this.bindExitHandler();
     this.openConnection();
+  }
+
+  /**
+   * ページ遷移(返回ボタン/リンク/タブ閉じ)時に、サーバへ確実に切断を伝えて数字人
+   * room を即解放させる。返回/リンクで離脱すると WS の close が遅延/欠落し、dh-saas の
+   * concurrent_room_quota が漏れて数回で 429(数字人が出せない)になるため。
+   * `pagehide` は bfcache 遷移でも発火し unload より確実(WS を持つページは基本
+   * bfcache 対象外なので persisted 復帰は考慮不要)。tab 切替(visibilitychange)では
+   * 切らない — 一時離席で session を殺さないため。サーバ側の dead-connection 検知と
+   * 二重の保険。
+   */
+  private exitHandlerBound = false;
+  private bindExitHandler(): void {
+    if (this.exitHandlerBound || typeof window === 'undefined') return;
+    this.exitHandlerBound = true;
+    window.addEventListener('pagehide', () => {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.isManualClose = true;
+        try {
+          this.ws.send(JSON.stringify({ type: 'stop' }));
+        } catch {
+          /* noop */
+        }
+        try {
+          this.ws.close(1000, 'page hidden');
+        } catch {
+          /* noop */
+        }
+      }
+    });
   }
 
   /**
@@ -177,6 +230,30 @@ export class DHWebSocket {
    */
   sendMuseTalkOffer(sdp: string, webrtcId: string): void {
     this.send({ type: 'musetalk_offer', data: { sdp, webrtcId } });
+  }
+
+  /**
+   * 数字人形象 オンデマンド(docs/10 §4.2 / B案)。avatar を一時停止/再開する制御。
+   * pause: サーバ(winclaw)が dh-saas セッション(VM room)側の後片付け(audio sink 閉じ等)を行う。
+   *        VM room 自体は browser の WebRTC 切断で閉じ、GPU/room slot が解放される。
+   * resume: サーバが dh-saas セッションを mint し直し、新しい dh_stream_info を再送する
+   *        → クライアントが再 negotiate して avatar を再表示(再唤醒)。
+   */
+  sendAvatarPause(): void {
+    this.send({ type: 'avatar_pause' });
+  }
+  sendAvatarResume(): void {
+    this.send({ type: 'avatar_resume' });
+  }
+
+  /**
+   * Tier 2 実時声音切替: 内嵌 UI が新しい Qwen 音色を選んだら、この指令をサーバ
+   * (節点 dh 插件)へ送る。サーバは Qwen realtime セッションを新 voice で張り直し、
+   * 次の一句から新しい声になる(コンテナ再起動不要 / avatar・audio sink は不変)。
+   * @param voice 新しい Qwen 音色 id(例: "Ethan" / "Cherry" / "Serena")。
+   */
+  sendVoiceChange(voice: string): void {
+    this.send({ type: 'voice_change', voice });
   }
 
   /**
@@ -435,6 +512,50 @@ export class DHWebSocket {
       // ------------------------------------------------------------------
       case 'pong':
         break;
+
+      // ------------------------------------------------------------------
+      // Tool call surfaced from the DH agent (realtime-handler が全 tool 呼出を
+      // {type:"tool_call", data:{name,args,callId}} で送る)。音声委託タスク
+      // (task_run)を秘书パネルへ橋渡しする — window CustomEvent で疎結合に流し、
+      // パネルが ai-meta /tasks/ingest へ記録する(A案・docs/10 §14.5)。
+      // ------------------------------------------------------------------
+      case 'tool_call': {
+        const toolName = (data.name as string) ?? '';
+        if (toolName === 'task_run') {
+          try {
+            window.dispatchEvent(
+              new CustomEvent('secretary-voice-task', {
+                detail: {
+                  callId: (data.callId as string) ?? '',
+                  args: (data.args as string) ?? '',
+                },
+              }),
+            );
+          } catch {
+            /* 非ブラウザ/dispatch 失敗は非致命 */
+          }
+        } else if (toolName === 'ui_action') {
+          // 音声 UI 制御(Sprint D)。realtime-handler が {target,action,name} を
+          // args に載せて送る。app-render.ts が 'dh-ui-action' を購読し、target
+          // ごとに既存ハンドラへ分派する(パネル開閉/マイク/カメラ/avatar 切替)。
+          // ここでは疎結合に DOM イベントを撒くだけ — 実行判断は app-render 側。
+          try {
+            const uiArgs = parseToolArgs(data.args);
+            window.dispatchEvent(
+              new CustomEvent('dh-ui-action', {
+                detail: {
+                  target: (uiArgs.target as string) ?? '',
+                  action: (uiArgs.action as string) ?? '',
+                  name: (uiArgs.name as string) ?? undefined,
+                },
+              }),
+            );
+          } catch {
+            /* 非ブラウザ/dispatch 失敗は非致命 */
+          }
+        }
+        break;
+      }
 
       default:
         console.debug('[DHWebSocket] Unhandled message type:', msg.type, msg);

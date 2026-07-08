@@ -128,6 +128,56 @@ export const WINCLAW_DH_TOOLS: QwenToolDefinition[] = [
       required: ["query"],
     },
   },
+  {
+    type: "function",
+    name: "ui_action",
+    description:
+      "Control the digital-human interface itself — show/hide/toggle panels " +
+      "and devices on the owner's screen. Use ONLY for UI-surface actions the " +
+      "owner asks for by voice (e.g. 'open the artifact', 'hide the controls', " +
+      "'turn on the mic', 'switch the avatar'). This does NOT execute any " +
+      "backend work — for real tasks use task_run, for questions use " +
+      "ask_winclaw. Returns {status:'ok', user_message} to speak verbatim.",
+    parameters: {
+      type: "object",
+      properties: {
+        target: {
+          type: "string",
+          enum: [
+            "artifact",
+            "task_panel",
+            "controls",
+            "mic",
+            "camera",
+            "avatar",
+            "subtitle",
+            "fullscreen",
+            "voice",
+            "music",
+          ],
+          description:
+            "The UI element/device to act on: artifact (成果物/PDF preview), " +
+            "task_panel, controls (control bar), mic, camera, avatar (数字人形象), " +
+            "subtitle (字幕), fullscreen (immersive stage), voice (speaker voice), " +
+            "music (music player — play/pause/stop a song).",
+        },
+        action: {
+          type: "string",
+          enum: ["show", "hide", "toggle", "on", "off", "open", "close", "play", "pause", "stop"],
+          description: "The operation to perform on the target.",
+        },
+        name: {
+          type: "string",
+          description:
+            "Optional name/id — the artifact filename when target='artifact', " +
+            "the spoken voice descriptor (e.g. '活泼'/'日語'/'小夏') when " +
+            "target='voice', or a JSON track {playUrl,title,artist,cover,loop} " +
+            "when target='music' & action='play'.",
+        },
+      },
+      required: ["target", "action"],
+    },
+  },
 ];
 
 /**
@@ -145,6 +195,11 @@ export interface ToolFlags {
   taskRun?: boolean;
   channelSend?: boolean;
   internetSearch?: boolean;
+  /**
+   * UI-control tool (`ui_action`). Enabled by default — lets the owner drive
+   * the digital-human interface (panels / mic / camera / avatar) by voice.
+   */
+  uiControl?: boolean;
 }
 
 /** Map from tool name to the flag field that enables/disables it. */
@@ -155,6 +210,7 @@ const FLAG_BY_NAME: Record<string, keyof ToolFlags> = {
   task_run: "taskRun",
   channel_send: "channelSend",
   internet_search: "internetSearch",
+  ui_action: "uiControl",
 };
 
 /**
