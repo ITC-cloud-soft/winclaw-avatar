@@ -368,9 +368,16 @@ export class RealtimeSessionHandler {
     const liteVoice = process.env.WINCLAW_DH_LITE_VOICE === "1";
 
     // Wire the memory bridge before building instructions so recent memory can
-    // be preloaded into the prompt. Only active in FC-style mode with a backend.
+    // be preloaded into the prompt. Active in FC-style mode with a backend.
+    // ★2026-07-10 修正(ユーザ要件「聊过的内容/执行过的任务都要进 winclaw 记忆」):
+    //   従来は `!liteVoice` を条件に入れ **lite-voice(現行既定)で記憶橋を丸ごと切って**
+    //   いた。だが lite-voice が切りたかったのは**日本語ペルソナ prompt**であって、
+    //   会話/任务の**記憶記録(memory/YYYY-MM-DD.md 追記 → gemini-embedding 索引)**では
+    //   ない。記録は prompt 言語に影響しない。よって lite-voice でも記憶橋を有効化し、
+    //   user 転写 + AI 回复 + 任务结果 + 播放音乐 を memory へ落として memory_search で
+    //   召回できる様にする。preload(直近の自分の会話)も中文なので lite の言語中立を壊さない。
     let memoryPreload = "";
-    if (isFC && !liteVoice && this.memory && this.config.memory?.recordConversation !== false) {
+    if (isFC && this.memory && this.config.memory?.recordConversation !== false) {
       try {
         this.memoryBridge = new MemoryBridge(
           this.workspaceDir,
@@ -402,9 +409,26 @@ export class RealtimeSessionHandler {
     // Japanese persona/examples. In lite mode we drop that persona entirely and
     // use this clean prompt, so the avatar follows whatever language the user
     // speaks (Serena is a zh-capable voice; the only blocker was the prompt).
-    const liteName = (identity.nickname || identity.name || "").trim();
+    // ★人設反映(lite mode): 后端が IDENTITY.md 冒頭に注入した name/relationship/
+    //   owner nickname を IdentityLoader が解析済み。伴侣名=identity.name(自称・
+    //   nickname は「对用户的称呼」なので混同しない)、关系=relationship、对用户的称呼
+    //   =nickname。冗長な日文人設は使わず(lite の「跟随用户语言」を壊さない)、簡潔な一行で
+    //   人設だけ乗せる。name 未解析時は "WinClaw" 回落なので出さない。
+    const selfName =
+      identity.name && identity.name.trim() && identity.name.trim() !== "WinClaw"
+        ? identity.name.trim()
+        : "";
+    const ownerNick = (identity.nickname || "").trim();
+    const rel = (identity.relationship || "").trim();
+    // brief = 后端が description から注入した一句話人設(分居状態/秘书役割 等の"当前設定"を含む)。
+    //   有れば relationship 単文より brief を優先(状況付きで濃い)。無ければ relationship へ回落。
+    const brief = (identity.brief || "").trim();
+    const personaLine =
+      (selfName ? `你的名字叫「${selfName}」。` : "") +
+      (brief ? `${brief} ` : rel ? `你是用户的${rel}。` : "") +
+      (ownerNick ? `请始终亲昵地称呼TA为「${ownerNick}」。` : "");
     const liteVoicePrompt =
-      `${liteName ? `你的名字是 ${liteName}。` : ""}你是一个温暖、自然的语音陪伴助手,正在和用户进行实时语音对话。\n\n` +
+      `${personaLine}你是一个温暖、自然的语音陪伴助手,正在和用户进行实时语音对话。\n\n` +
       `最重要的规则:\n` +
       `1. 语言:必须用「用户当前所说的语言」回复。用户说中文你就说中文,说英文就说英文,说日文就说日文。` +
       `当用户切换语言、或明确要求你换语言时(例如说「说中文」),立刻从此用那种语言回复。` +
@@ -412,11 +436,23 @@ export class RealtimeSessionHandler {
       `2. 简短:这是语音对话,回复要短、口语化,通常 1-2 句话。不要废话、不要复述问题、不要「让我…」之类的开场白。\n` +
       `3. 自然:像朋友一样温暖、直接、切题。\n` +
       `4. 工具:当用户要你做事——发消息到 WhatsApp/Slack/Telegram/LINE/邮件、上网查实时信息、回忆过去的事、执行任务——就调用相应的工具去完成,完成后用一句口语化的话汇报结果。不确定用哪个工具时,用 ask_winclaw 把需求原样转给 winclaw。日常闲聊不要调用工具。\n` +
-      `5. 画面控制(ui_action):当用户要你操作这个界面——显示/隐藏「任务管理」面板、藏起或显示底部「控制条」、打开某个「成果物/PDF」预览、开关麦克风、开关摄像头、启动或关闭「数字人形象」——就调用 ui_action 工具。参数 target 取值:` +
-      `task_panel(任务管理面板)、controls(控制条)、artifact(成果物预览,name 填文件名如「英伟达投资分析报告.pdf」)、mic(麦克风)、camera(摄像头)、avatar(数字人形象);action 取值:show/hide/toggle/on/off/open/close。` +
-      `例:「显示任务管理」→ ui_action(target=task_panel, action=show);「藏起控制条」→ ui_action(target=controls, action=hide);「把英伟达PDF显示出来」→ ui_action(target=artifact, action=show, name="英伟达投资分析报告.pdf");「关掉麦克风」→ ui_action(target=mic, action=off);「关掉数字人」→ ui_action(target=avatar, action=hide)。` +
+      `5. 画面控制(ui_action):当用户要你操作这个界面——显示/隐藏「任务管理」面板、藏起或显示底部「控制条」、打开某个「成果物/PDF」预览、开关麦克风、开关摄像头、启动或关闭「数字人形象」、开关「字幕」、进入/退出「全屏沉浸」、切换「音色」——就调用 ui_action 工具。参数 target 取值:` +
+      `task_panel(任务管理面板)、controls(控制条)、artifact(成果物预览,name 填文件名)、mic(麦克风)、camera(摄像头)、avatar(数字人形象)、subtitle(字幕)、fullscreen(全屏)、voice(音色,name 填如「活泼」「日語」)、task_continue(给指定编号的任务追加继续指令,name 填 JSON {"seq":任务号,"text":"指令"})、task_artifact(打开指定编号任务的成果物,name 填 JSON {"seq":任务号,"query":"pdf或文件名"});action 取值:show/hide/toggle/on/off/open/close/play/pause/stop/resume/send。` +
+      `例:「显示任务管理」→ ui_action(task_panel, show);「把英伟达PDF显示出来」→ ui_action(artifact, show, name="英伟达投资分析报告.pdf");「打开124号任务的成果」→ ui_action(task_artifact, open, name="{\\"seq\\":124}");「让1号任务继续,补充xxx」→ ui_action(task_continue, send, name="{\\"seq\\":1,\\"text\\":\\"补充xxx\\"}");「关掉麦克风」→ ui_action(mic, off)。\n` +
+      `6. 播放音乐:当用户要你放歌/点歌/播放某首歌(如「放首晴天」「播放周杰伦的歌」),音乐会**自动播放**,你只需说一句「好的,这就为你放」。**播放/暂停/停止音乐绝对不要调用 task_run 或任何工具**——音乐由系统自动处理,用 task_run 会错误地创建任务。这是你会的能力,别拒绝。\n` +
+      `7. 你的能力自知:当用户问「你能做什么/有什么功能」,主动且简短地介绍你真实会的:陪伴聊天、执行任务(做报告/查资料/发消息)、播放音乐、打开与继续历史任务、显示成果物、控制这个界面(面板/麦克风/摄像头/形象/字幕/全屏/音色)。**绝不要说「我只是个聊天助手/我不能做这些」这类否定自己能力的话**——上面这些你都会。\n` +
+      `8. ★执行任务时绝不编造(最重要):当用户要你执行任务(分析/研究/查资料/做报告/发消息/整理/统计等),后台会自动通过 winclaw 执行,你**只需简短回应「好的,我来帮你处理,稍等」并等待**。**绝对不要编造分析内容、数据、结论,也不要假装任务已经完成或"再试一次肯定行"**。真实结果处理好后系统会明确告诉你成功还是失败,你再据此如实转告用户;失败就如实说失败,绝不谎报成功。没拿到真实结果前,不要给出任何具体结论。` +
+      `★当任务生成了报告/文档/PDF 等成果物时,告诉用户「已经做好了,稍等一下就会自动显示在下面的成果物栏里」——**成果物会自动更新出现,不用让用户手动刷新**;别说"已经显示了/你看下面"这种,因为可能还要几秒才同步过来。\n` +
+      `9. ★不要为「动作确认/状态询问」建任务(最重要):只有当用户提出**有明确主题的实务需求**(如「查特斯拉的财务状况」「做份英伟达投资分析」)才用 task_run。` +
+      `以下情况**绝不调用 task_run**,直接口头回应即可:①问任务/系统状态(「这个任务在执行吗」「好了吗」「进度怎样」)——直接口头告知或说「我看一下」;②光杆动作没有主题(「帮我打开」「显示」「处理一下」)——这是界面操作,用 ui_action 或反问「你要打开什么」;③状态类短语(「正在处理中」)。这些都不该出现在任务列表里。\n` +
+      `11. ★创建任务前先确认(重要):当你要为用户创建一个任务(调查/分析/做报告/生成文档等),` +
+      `**先用一句话复述你理解的任务内容并问「对吗?」**,等用户说「对/是/开始」再真正创建并执行;` +
+      `用户说「不对/取消」就放弃;用户补充内容就并进去再确认一次。**在用户确认前,绝不要说任务已创建/已开始/已完成**。\n` +
+      `10. ★记忆与延续(重要):你和主人聊过的内容、做过的任务、放过的歌都会**存进长期记忆**。` +
+      `当用户提到过去(「我上次说的」「你还记得吗」「之前那个」),先凭记忆回答;记不清就调 memory_search 查再答,**不要说「我不记得/我记不住」**。` +
+      `每次对话开始,如果有历史记忆就自然延续话题,别每次都从「今天过得怎么样」这种通用开场重新开始。\n` +
       `注意区分:界面/画面的显示隐藏用 ui_action;而"生成PDF/做报告/写代码"这类实务任务用 task_run,别混。调用后用一句口语化的话确认(如「好的,打开任务管理」)。`;
-    const instructions = liteVoice
+    const _baseInstructions = liteVoice
       ? liteVoicePrompt
       : isFC
       ? buildInstructions({
@@ -438,6 +474,22 @@ export class RealtimeSessionHandler {
           additionalContext: memoryPreload || undefined,
         })
       : identity.instructions;
+
+    // ★2026-07-10(ユーザ要件「聊过的内容要记得住、别每次都从『今天过得怎么样』开始」):
+    //   非 lite の buildInstructions は additionalContext に memoryPreload を折込むが、
+    //   **lite-voice(現行既定)は liteVoicePrompt を使い memoryPreload を無視していた** →
+    //   記録はされても開口時に過去文脈を持たず、毎回リセットされた挨拶になる。ここで
+    //   lite-voice でも直近記憶を prompt 末尾へ明示付加し、「憶えていて話を継ぐ」を実現する。
+    const instructions =
+      liteVoice && memoryPreload
+        ? _baseInstructions +
+          "\n\n【最近的对话记忆(这是你和主人**之前聊过/做过**的事,你要记得)】\n" +
+          memoryPreload +
+          "\n\n★根据上面的记忆:开口打招呼时**自然延续之前的话题或提到上次聊/做过的事**" +
+          "(例如「上次你说的那个…后来怎么样了」「昨天点的那首歌不错吧」)," +
+          "**绝对不要每次都用『今天过得怎么样』『有什么可以帮你』这种从零开始的通用开场**。" +
+          "用户提到过去的事时,先用记忆回答,记不清再用 memory_search 查。"
+        : _baseInstructions;
 
     this.qwenClient = new QwenRealtimeClient(
       {
@@ -1099,6 +1151,95 @@ export class RealtimeSessionHandler {
     call: import("./integrations/qwen-realtime.js").QwenFunctionCall,
   ): Promise<void> {
     if (!this.toolRouter) return;
+    // モデルが FC した=転写兜底は不要(真フォールバック判定用)。
+    this._lastFunctionCallAt = Date.now();
+    // ★音楽はクライアント側 _tryVoiceMusic が再生済。モデルが task_run("music.*") を
+    //   呼んでも winclaw タスクを作らず良性結果を返す(スプリアスな music.play タスク濫造 +
+    //   二重処理を防ぐ)。音楽の再生/停止は task_run ではない。
+    if (call.name === "task_run") {
+      let taskName = "";
+      try {
+        taskName = String(
+          (JSON.parse(call.argumentsJson ?? "{}") as { taskName?: string }).taskName ?? "",
+        );
+      } catch {
+        /* ignore */
+      }
+      if (/^music([._]|$)|music[._](play|pause|stop|resume|next)/i.test(taskName)) {
+        console.info(
+          `[DH:${this.sessionId}] ⏭ task_run("${taskName}") = 音楽 → winclaw 派発せず(客户端兜底処理済)`,
+        );
+        const benign = JSON.stringify({
+          status: "ok",
+          summary: "音乐已经在播放了。",
+          user_message: "音乐已经在播放了。",
+        });
+        this.sendToClient({
+          type: "tool_result",
+          data: { name: call.name, callId: call.callId, status: "ok", summary: "音乐(客户端处理)" },
+        });
+        try {
+          await this.qwenClient.sendFunctionResult(call.callId, benign);
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
+      // ★動作確認/状態質問/光杆動詞の task_run はタスク化しない(モデルが誤って
+      //   task_run を呼んでも受管タスクを作らず会話で応じる)。ユーザ要件 2026-07-10。
+      if (RealtimeSessionHandler._isJunkTaskRequest(taskName)) {
+        console.info(
+          `[DH:${this.sessionId}] ⏭ task_run("${taskName}") = 非タスク発話(状態質問/動作確認)→ 派発せず`,
+        );
+        const benign = JSON.stringify({
+          status: "ok",
+          summary: "这是个操作/状态类的请求,不需要建任务,我直接口头回应就好。",
+          user_message: "好的。",
+        });
+        this.sendToClient({
+          type: "tool_result",
+          data: { name: call.name, callId: call.callId, status: "ok", summary: "非任务发话(不建任务)" },
+        });
+        try {
+          await this.qwenClient.sendFunctionResult(call.callId, benign);
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
+    }
+    // ★重複抑制: 3.5 モデルは同一 task_run/ask_winclaw を数秒で何度もループ発火し
+    //   タスクが 4 個も起きる。同一 intent(name+args)を 60s 内は**再実行せず**、
+    //   Qwen へ「処理中・重複提出するな」を返してループを止める。
+    if (call.name === "task_run" || call.name === "ask_winclaw") {
+      const now = Date.now();
+      const key = `${call.name}:${(call.argumentsJson ?? "").replace(/\s+/g, "").slice(0, 200)}`;
+      for (const [k, ts] of this._recentTaskKeys) {
+        if (now - ts > RealtimeSessionHandler._TASK_DEDUP_MS) this._recentTaskKeys.delete(k);
+      }
+      const last = this._recentTaskKeys.get(key);
+      if (last !== undefined && now - last < RealtimeSessionHandler._TASK_DEDUP_MS) {
+        console.info(
+          `[DH:${this.sessionId}] ⏭ dedup ${call.name}(${Math.round((now - last) / 1000)}s前に派発済)— 重复派发を阻止`,
+        );
+        const dup = JSON.stringify({
+          status: "ok",
+          summary: "这个任务我已经在处理了,请不要重复提交,稍等结果就好。",
+          user_message: "这个任务我已经在处理了,请稍等结果。",
+        });
+        this.sendToClient({
+          type: "tool_result",
+          data: { name: call.name, callId: call.callId, status: "ok", summary: "已在处理中(去重)" },
+        });
+        try {
+          await this.qwenClient.sendFunctionResult(call.callId, dup);
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
+      this._recentTaskKeys.set(key, now);
+    }
     // A2: Log function call dispatch (before router)
     console.info(
       `[DH:${this.sessionId}] 🔧 Qwen→tool: ${call.name}  args=${(call.argumentsJson ?? "").slice(0, 300)}`
@@ -1364,11 +1505,21 @@ export class RealtimeSessionHandler {
     const trimmed = transcript.trim().replace(/[。！？.!?]+$/, "");
     if (!trimmed || trimmed.length < 2) return;
 
+    // ★タスク作成前の復唱確認への応答(2026-07-10)。確認待ち中は「对/不对/补充」を最優先で
+    //   捌く(music の「好」等に横取りされない為に **最前**で判定)。命中で以降処理を止める。
+    if (this._pendingTaskConfirm) {
+      this.sendToClient({ type: "user_transcript", data: { content: transcript } });
+      if (this._handleTaskConfirmReply(trimmed)) return;
+    }
+
     // 語音点歌(内蔵 music bundle・docs/20)。点歌/停止/兜底提案への肯定応答を
     // 転写ベースで確定的に処理する。**filler 過濾より先**に判定するのは、兜底提案
     // (「放《稻香》好吗?」)への「好」等の肯定応答が FILLER_PATTERN に食われるのを
     // 防ぐため。命中したら以降の STT/agent 送出はしない。
-    if (this._tryVoiceMusic(trimmed)) return;
+    if (this._tryVoiceMusic(trimmed)) {
+      this.qwenClient?.suppressNextResponse(); // 兜底が喋る為モデルは抑制(二重発声防止)
+      return;
+    }
 
     // Filter out filler words
     if (RealtimeSessionHandler.FILLER_PATTERN.test(trimmed)) {
@@ -1386,18 +1537,34 @@ export class RealtimeSessionHandler {
 
     // 「N号任务の成果物を開く」(例:「打开120号任务的PDF」)。継続指示より先に判定
     // (開く動詞+成果物名詞があれば継続でなく成果物オープン)。
-    if (this._tryVoiceTaskArtifact(trimmed)) return;
+    if (this._tryVoiceTaskArtifact(trimmed)) {
+      this.qwenClient?.suppressNextResponse();
+      return;
+    }
 
     // 「特定タスク番号への継続指示」(例:「3号任务把标题改成…」)。UI 命令より先に
     // 判定(長文可・40字上限を掛けない)。命中したら client へ task_continue を下達し
     // agent へは流さない(secretary-panel が該当タスクへ POST /tasks/{id}/messages)。
-    if (this._tryVoiceTaskContinue(trimmed)) return;
+    if (this._tryVoiceTaskContinue(trimmed)) {
+      this.qwenClient?.suppressNextResponse();
+      return;
+    }
 
     // 語音 UI 制御の確定的兜底: realtime モデル(omni-flash)は ui_action の
     // function-call を確実には出さない(実測: 「カメラを開いて」を理解しても発話で
     // 応答するだけで tool を呼ばない)。転写を直接照合し、UI 操作意図なら Qwen の
     // 判断を待たず client へ ui_action を下達する。詳細は _tryVoiceUiIntent 参照。
-    this._tryVoiceUiIntent(trimmed);
+    if (this._tryVoiceUiIntent(trimmed)) {
+      this.qwenClient?.suppressNextResponse();
+      return;
+    }
+
+    // ★全「実行系要求」の winclaw 兜底(ユーザ要件: 全 tool-call に winclaw 兜底必須)。
+    //   実時モデルは task_run 等の function-call を実際には出さない(実測 0/72=纯聊天)。
+    //   UI/音楽/成果物/継続 以外の**実行を要する要求**(分析/調査/作成/送信/整理/提醒…)を
+    //   検出したら、**winclaw agent(ask_winclaw)へ確定的に委ね**、返ってきた**真の成否**を
+    //   数字人へ播報+コンテキスト注入する(成功/失败を捏造しない=胡说八道防止)。
+    if (this._tryVoiceAskWinclaw(trimmed)) return;
 
     // In function_calling mode Qwen drives the conversation directly, so we
     // only surface transcripts for UI — no gateway round-trip needed.
@@ -1446,9 +1613,11 @@ export class RealtimeSessionHandler {
   /** 否定/疑問のときは兜底しない(誤爆防止)。 */
   private static readonly _UI_SKIP =
     /不要|不用|别|別|甭|勿|莫|\bwhy\b|为什么|為什麼|什么是|什麼是|吗[?？]?$|嗎[?？]?$|呢[?？]?$/i;
-  /** 成果物プレビュー対象語(open=show / close=hide)。 */
+  /** 成果物プレビュー対象語(open=show / close=hide)。★成果物の"中身"を指す語も含める
+   *  (「打开投资建议/分析/方案」等 = 直前タスクの成果物を開く意図。task_run 化を防ぐ)。
+   *  artifact 分岐は wantsOn(打开/查看)必須なので、動詞無しの「分析特斯拉」等は task のまま。 */
   private static readonly _UI_ARTIFACT =
-    /成果物|成果|报告|報告|文档|文檔|文件|预览|預覽|\bpdf\b|レポート|ファイル/i;
+    /成果物|成果|报告|報告|报告书|報告書|文档|文檔|文件|预览|預覽|\bpdf\b|レポート|ファイル|投资建议|投資建議|投资报告|投資報告|建议书|建議書|分析|方案|计划书|計劃書|财报|財報|结果|結果/i;
   /** 全屏/沉浸モード対象語(「数字人」を含みうるので最優先で判定する)。 */
   private static readonly _UI_FULLSCREEN =
     /全屏|全螢|全萤|全画面|全屏幕|沉浸|フルスクリーン|full ?screen|最大化/i;
@@ -1463,6 +1632,46 @@ export class RealtimeSessionHandler {
 
   private _uiIntentSeq = 0;
 
+  // ★点歌の片段合并(2026-07-10・ユーザ要件「保证搜索到对应音乐」)。「放…」「青花瓷」「好不好」の
+  //   様に断続化した語音を 1 曲へまとめて検索する為の収集バッファ + 収集窗フラグ。
+  private _musicCoalesceBuffer = "";
+  private _musicCoalesceTimer: ReturnType<typeof setTimeout> | null = null;
+  private _musicListening = false;
+  /** 点歌収集の無音待ち窓(ms)。この間の続き片段(バレ曲名含む)を同一点歌へ吸収。 */
+  private static readonly _MUSIC_COALESCE_MS = 1400;
+
+  // ★タスク派発の重複抑制 + 兜底の真フォールバック化(2026-07-09)。
+  //   3.5 モデルが prompt 誘導で FC する様になったが**同一 task_run をループ発火**する
+  //   (実測: 1 要求で task_run×4=タスク 4 個)。加えて転写兜底が叠加し二重派発/二重発声。
+  /** 直近 function-call 発生時刻(ms)。転写兜底が「モデルが FC 済ならスキップ」に使う。 */
+  private _lastFunctionCallAt = 0;
+  /** intentKey → 最終派発 ms。同一タスクの短時間再派発を抑止。 */
+  private readonly _recentTaskKeys = new Map<string, number>();
+  /** 同一 intent の再派発を無視する窓(ms)。 */
+  private static readonly _TASK_DEDUP_MS = 60_000;
+  /** 兜底が待機中の最新の実行系要求(遅延 fallback 判定用)。 */
+  private _pendingAskWinclaw: string | null = null;
+  // ★連続語音の合并(2026-07-10・ユーザ要件「同じ任务は1個の编号だけ」)。断続的に話す
+  //   task-worthy 発話を **1 タスクへ合并**する。片段が来る度にバッファへ追記し、~5s の
+  //   無音(次の片段が来ない=一区切り)で **1 回だけ** task_run を dispatch する。
+  private _taskCoalesceBuffer = "";
+  private _taskCoalesceTimer: ReturnType<typeof setTimeout> | null = null;
+  private _taskCoalesceFcBase = 0;
+  /** 合并の無音待ち窓(ms)。この間に続く片段は同一タスクへ吸収。 */
+  private static readonly _TASK_COALESCE_MS = 5000;
+  // ★タスク作成前の**復唱確認**(2026-07-10・ユーザ要件): 合并した要求を dispatch する前に
+  //   数字人が「你是要我X吗?」と復唱し、**肯定応答を得てから**作成+実行する(誤タスク防止)。
+  private _pendingTaskConfirm: string | null = null;
+  private _pendingTaskConfirmTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 確認待ちの自動失効(ms)。無応答ならタスクを作らず破棄。 */
+  private static readonly _TASK_CONFIRM_TTL_MS = 30_000;
+  /** 確認への肯定(先頭一致)。 */
+  private static readonly _TASK_CONFIRM_YES =
+    /^(对|對|是|是的|对的|對的|没错|沒錯|好|好的|好呀|好嘞|可以|行|嗯|嗯嗯|嗯呐|确认|確認|确定|確定|就这样|就這樣|就是|开始|開始|开始吧|開始吧|去吧|执行|執行|做吧|拜托|拜託|ok|okay|yes|yep|sure|はい|うん|いいよ)/i;
+  /** 確認への否定/取消(先頭一致)。 */
+  private static readonly _TASK_CONFIRM_NO =
+    /^(不|不对|不對|不是|不用|不要|别|別|算了|取消|等等|先别|先別|停|不做|重来|重來|再说|再說|no|nope|やめ|ちがう)/i;
+
   // ── 語音点歌(内蔵 music bundle・docs/20)──────────────────────────────
   /** 兜底提案中の曲(「放《稻香》好吗?」)。次の肯定応答で再生する。 */
   private _pendingMusic: { track: MusicTrack; artist: string } | null = null;
@@ -1472,13 +1681,27 @@ export class RealtimeSessionHandler {
   /** 「换一首/下一首」用に直近の歌手・曲名を保持(同歌手の別曲を推す)。 */
   private _lastMusicArtist = "";
   private _lastMusicTitle = "";
+  /** ★音乐記憶(2026-07-10・ユーザ要件): 再生した曲を履歴保持。DH が「刚才放的什么歌」に
+   *  答え、「再放一遍/刚才那首」で **URL 再解決なし**に即再生できる様にする(mp3 path 記憶)。
+   *  セッション内メモリ(container 稼働中は保持)。最新が末尾・上限 30 件。 */
+  private _musicHistory: Array<{
+    title: string;
+    artist: string;
+    playUrl: string;
+    source: string;
+    at: number;
+  }> = [];
+  /** 直近再生トラック(「再放一遍」の即時再生用・playUrl キャッシュ)。 */
+  private _lastMusicTrack: MusicTrack | null = null;
 
-  /** 点歌トリガ(播放/点播/放一首… + 曲名 or 《》)。誤爆防止のため下の解析と併用。 */
+  /** 点歌トリガ(播放/点播/放一首… + 曲名 or 《》)。誤爆防止のため下の解析と併用。
+   *  ★D: 灵敏化。「我想听/我要听/放首歌/放点音乐/听首歌」等の明確な点歌表現を追加
+   *  (曲名抽出は _parseMusicIntent が担うので誤爆は残りが空/generic なら弾かれる)。 */
   private static readonly _MUSIC_TRIGGER =
-    /播放|點播|点播|放一首|放首|点一首|點一首|来一首|來一首|来首|來首|听一首|聽一首|点歌|點歌|唱一首|唱首|点播首/;
-  /** 弱いトリガ(放/点/来/听/唱)。CTX(歌/音乐/《》)と併用時のみ点歌とみなす。 */
+    /播放|點播|点播|放一首|放首|点一首|點一首|来一首|來一首|来首|來首|听一首|聽一首|点歌|點歌|唱一首|唱首|点播首|我想听|我想聽|我要听|我要聽|放首歌|放個歌|放个歌|唱首歌|放点音乐|放點音樂|来点音乐|來點音樂|放音乐|放音樂|听首歌|聽首歌|听点|聽點/;
+  /** 弱いトリガ(放/点/来/听/唱)。CTX(歌/音乐/曲/旋律/《》)と併用時のみ点歌とみなす。 */
   private static readonly _MUSIC_WEAK_VERB = /[放點点來来聽听唱]/;
-  private static readonly _MUSIC_CTX = /歌|音乐|音樂|曲|[《【][^》】]+[》】]/;
+  private static readonly _MUSIC_CTX = /歌|音乐|音樂|曲|旋律|单曲|單曲|[《【][^》】]+[》】]/;
   /** 停止(★music-active 時のみ判定するので広く採る:停/停止/别放/关掉/不听 等)。 */
   private static readonly _MUSIC_STOP =
     /停(止|下|掉)?$|停止|停下|停掉|别放|別放|别听|別聽|别唱|別唱|关掉|關掉|关了|關了|关闭|關閉|关一下|關一下|不(听|聽)了|不想(听|聽|放)|不要(听|聽|放|了)|够了|夠了|安静|安靜|静音|靜音|闭嘴|閉嘴|结束|結束/;
@@ -1490,6 +1713,9 @@ export class RealtimeSessionHandler {
   /** 换一首/下一首(同歌手の別曲を推す)。 */
   private static readonly _MUSIC_NEXT =
     /换一?首|換一?首|换个|換個|换歌|換歌|下一首|下一曲|下一个|下一個|再来一?首|再來一?首|再放一?首|来首别的|來首別的|别的歌|別的歌|换首歌|換首歌|不(听|聽)这(首)?|不(听|聽)這(首)?|换换|換換/;
+  /** ★灵敏化: 「再放一遍/刚才那首」= 直近再生トラックを URL 再解決なしに即再生。 */
+  private static readonly _MUSIC_REPLAY =
+    /再放一遍|再放一次|再听一遍|再聽一遍|重新放|重放|重播|刚才那首|剛才那首|刚才的歌|剛才的歌|刚才那歌|剛才那歌|同一首|再来一遍|再來一遍|那首再放|刚刚那首|剛剛那首/;
   /** 兜底提案への肯定/否定(短文照合)。 */
   private static readonly _MUSIC_AFFIRM =
     /^(好|好的|好呀|好啊|好嘞|可以|行|嗯好|要|想(听|聽)|放吧|来吧|來吧|播放|放|听|聽|ok|okay|yes|はい|うん|いいよ|おねがい|お願い)/i;
@@ -1710,6 +1936,7 @@ export class RealtimeSessionHandler {
       .trim();
     this._dispatchUiAction("task_artifact", "show", JSON.stringify({ seq: info.seq, query }));
     this.enqueueTts(`好的,我打开第${info.seq}号任务的成果物。`);
+    this._noteDhContext(`已为用户打开第${info.seq}号任务的成果物预览${query ? `(${query})` : ""}。`);
     return true;
   }
 
@@ -1738,7 +1965,274 @@ export class RealtimeSessionHandler {
     }
     this._dispatchUiAction("task_continue", "send", JSON.stringify({ seq, text: instruction }));
     this.enqueueTts(`好的,我把这条指令补到第${seq}号任务。`);
+    this._noteDhContext(`已给第${seq}号任务追加继续指令:「${instruction}」。`);
     return true;
+  }
+
+  // -------------------------------------------------------------------------
+  // ★全「実行系要求」の winclaw 兜底(ask_winclaw)—— realtime FC 不発の確定救済。
+  //   ユーザ要件: (1) 全 tool-call は winclaw 兜底必須、(2) 数字人は真の成否を知る事。
+  // -------------------------------------------------------------------------
+  /** 実行を要する要求か(明確な実行動詞を含む)。単なる疑問/挨拶/能力質問は含まない。 */
+  private static readonly _ACTIONABLE_INTENT =
+    /(帮我|帮忙|替我|分析|研究|调研|调查|查(一下|下|询|阅|查)|搜(一下|索|查)|检索|做(个|一个|一份|一下)|生成|写(个|一个|一封|一份|一篇|篇)|制作|整理|统计|汇总|归纳|总结|摘要|报告|方案|计划|发送|发个|发一(封|条)|发邮件|发消息|发短信|通知|安排|预约|提醒|排期|日程|执行|处理|办理|搞定|部署|创建|更新|删除|修改|拉取|下载|翻译|计算|预测|评估|投资建议|analyze|research|investigate|search for|look up|find out|make me|write me|generate|summari[sz]e|report|send (a|an|me)|schedule|remind|deploy|translate|calculate|分析して|調べて|調査して|作って|書いて|送って|まとめて|報告して|やって|手伝って)/i;
+  /** 兜底に流さない纯粹な挨拶/感谢/告别(全文一致のみ。task を含む文はブロックしない)。 */
+  private static readonly _ACTIONABLE_SKIP =
+    /^(你好|您好|早上好|中午好|下午好|晚上好|嗨|哈喽|哈啰|在吗|在不在|你是谁|你叫什么|你好吗|谢谢|谢谢你|多谢|再见|拜拜|晚安|hi|hello|hey|thanks|thank you|bye|good night)[!。！.~\s]*$/i;
+
+  // ★タスク化すべきでない発話の判定(2026-07-10・ユーザ要件: 動作確認/状態質問の
+  //   碎语音でタスクを作らない。#133/#134 の様な実務要求のみ作る)。
+  /** タスク状態/進捗を問うだけの発話(建てるべきタスクでなく会話で答えるべき)。 */
+  private static readonly _TASK_STATUS_QUERY =
+    /(在执行|在執行|在处理|在處理|执行吗|執行嗎|执行了(没|吗|嘛)|執行了(沒|嗎)|执行情况|執行情況|执行的?怎么样|完成了(吗|没|嘛|沒)|完成了嗎|好了(吗|没|嘛|沒)|好了嗎|怎么样了|怎麼樣了|咋样了|咋樣了|做完了(吗|没|嘛)|做好了(吗|没|嘛)|搞定了(吗|没)|弄好了(吗|没)|进度(如何|怎样|怎么样)?|進度|状态如何|狀態如何|正在处理|正在處理|正在执行|正在執行|正在生成|正在加载|正在載入|处理中|處理中)/;
+  /** 光杆 UI/動作動詞(宾语なし)。単体はタスクでなく UI 操作の取りこぼし/状態語。 */
+  private static readonly _TASK_BARE_VERB =
+    /^(?:请|請|帮我|幫我|麻烦|麻煩|给我|給我|帮忙|幫忙|替我|你|来|來)*\s*(?:打开|打開|开启|開啟|关闭|關閉|显示|顯示|隐藏|隱藏|开|開|关|關|看一下|看看|看|停|暂停|暫停|继续|繼續|开始|開始|结束|結束|退出|返回|确定|確定|取消|处理|處理|执行|執行|操作|运行|運行)\s*(?:一下|吧|呢|啊|哦|嘛|嘛|中|一下下)?\s*(?:正在)?(?:处理|處理|执行|執行|加载|載入)?\s*(?:中)?[。.!！?？~、\s]*$/;
+
+  /**
+   * タスク化すべきでない発話か(true=作らない)。ユーザ要件(2026-07-10):
+   *   ①状態/進捗を問うだけ(「这个任务在执行吗」)②光杆動詞(「帮我打开」)
+   *   ③状態語(「显示正在处理中」)④トリガ語を除くと主題が残らない(実体なし)
+   * これらは会話で応じるべきで、受管タスクを濫造しない。#133/#134 の様に明確な
+   * 主題(特斯拉财务/发展计划)があるものは false(=タスク化する)。
+   */
+  static _isJunkTaskRequest(text: string): boolean {
+    const t = (text || "").trim();
+    if (!t) return true;
+    if (RealtimeSessionHandler._TASK_STATUS_QUERY.test(t)) return true;
+    if (RealtimeSessionHandler._TASK_BARE_VERB.test(t)) return true;
+    // トリガ動詞/礼儀語/填詞を除いて主題が 2 字未満なら実体なし=作らない。
+    const core = t
+      .replace(
+        /(请|請|帮我|幫我|麻烦|麻煩|给我|給我|帮忙|幫忙|替我|马上|馬上|现在|現在|一下|那个|那個|这个|這個|就是|嗯|呃|然后|然後|正在|中)/g,
+        "",
+      )
+      .replace(
+        /(打开|打開|开启|開啟|显示|顯示|查询|查詢|查阅|查閱|查一下|查|搜索|搜寻|搜尋|搜|检索|檢索|做|生成|写|寫|制作|製作|整理|处理|處理|执行|執行|操作|运行|運行|安排|通知)/g,
+        "",
+      )
+      .replace(/[，,。．.、：:；;!！?？~\s]/g, "");
+    if (core.length < 2) return true;
+    return false;
+  }
+
+  /**
+   * 実行を要する要求を検出したら winclaw agent(ask_winclaw)へ確定的に委ねる兜底。
+   * 実時モデルが function-call を出さない為の救済(実測 0/72)。命中で true。
+   */
+  private _tryVoiceAskWinclaw(transcript: string): boolean {
+    const t = transcript.trim();
+    if (t.length < 3 || t.length > 200) return false;
+    if (RealtimeSessionHandler._ACTIONABLE_SKIP.test(t)) return false;
+    if (!RealtimeSessionHandler._ACTIONABLE_INTENT.test(t)) return false;
+    // ★動作確認/状態質問/光杆動詞はタスク化しない(会話で応じる)。ユーザ要件 2026-07-10。
+    if (RealtimeSessionHandler._isJunkTaskRequest(t)) {
+      console.info(`[DH:${this.sessionId}] ⏭ 非タスク発話(状態質問/動作確認)→ タスク化せず: "${t.slice(0, 40)}"`);
+      return false;
+    }
+    // ★連続語音を1タスクへ合并(2026-07-10)。断続的に話す片段(「调查A股内存」「结果做成
+    //   PDF」…)を都度タスク化すると #146〜#150 の様に**同一要求が複数编号**になる。よって
+    //   即派発せず、バッファへ追記して ~5s の無音待ち後に **1 回だけ** dispatch する。
+    //   ・バッファ開始時のみ ack を1回喋る(「好的,我来处理」)。
+    //   ・待機中に片段が来る度にタイマ再セット(=最後の片段から 5s 静かになったら确定)。
+    //   ・待機中にモデルが FC したら兜底は撤回(二重回避)。
+    if (this._taskCoalesceBuffer && !this._taskCoalesceBuffer.includes(t)) {
+      this._taskCoalesceBuffer += "。" + t; // 続きの片段を追記
+    } else if (!this._taskCoalesceBuffer) {
+      this._taskCoalesceBuffer = t; // 新規バッファ開始
+      this._taskCoalesceFcBase = this._lastFunctionCallAt;
+      this.enqueueTts("好的,我来帮你处理,请稍等。"); // ack は開始時に1回だけ
+      this._armKeepAlive();
+    }
+    if (this._taskCoalesceTimer) clearTimeout(this._taskCoalesceTimer);
+    this._taskCoalesceTimer = setTimeout(() => {
+      const full = this._taskCoalesceBuffer.trim();
+      const fcBase = this._taskCoalesceFcBase;
+      this._taskCoalesceBuffer = "";
+      this._taskCoalesceTimer = null;
+      if (!full) return;
+      // 待機中にモデルが FC(自ら task_run)した=処理済→兜底しない(二重回避)。
+      if (this._lastFunctionCallAt !== fcBase) return;
+      // ★即派発せず、まず**復唱確認**する(ユーザ要件)。肯定応答で初めて作成+実行。
+      this._askTaskConfirm(full);
+    }, RealtimeSessionHandler._TASK_COALESCE_MS);
+    return true; // 消費(通常フロー送出は止める。Qwen 自身の応答は別途走る)
+  }
+
+  /**
+   * 合并したタスク要求を **dispatch 前に復唱確認** する(ユーザ要件 2026-07-10)。
+   * 「你是要我X吗?说『对』我就去做」と喋り、`_pendingTaskConfirm` に控える。以後の肯定で
+   * `_executeCoalescedTask` が走る。TTL 内に応答が無ければ破棄(タスクを作らない)。
+   */
+  private _askTaskConfirm(full: string): void {
+    this._pendingTaskConfirm = full;
+    if (this._pendingTaskConfirmTimer) clearTimeout(this._pendingTaskConfirmTimer);
+    this._pendingTaskConfirmTimer = setTimeout(() => {
+      if (this._pendingTaskConfirm) {
+        console.info(`[DH:${this.sessionId}] ⏭ タスク確認 無応答で失効: "${this._pendingTaskConfirm.slice(0, 40)}"`);
+      }
+      this._pendingTaskConfirm = null;
+      this._pendingTaskConfirmTimer = null;
+    }, RealtimeSessionHandler._TASK_CONFIRM_TTL_MS);
+    // 復唱(長すぎる時は要約風に頭を読む)。Qwen の当ターン応答は抑制し、この確認だけ喋る。
+    const recap = full.length > 60 ? full.slice(0, 60) + "…" : full;
+    this.enqueueTts(`好的,我理解的任务是:${recap}。确认的话说一声「对」,我就开始;要改就直接说。`);
+    this._noteDhContext(
+      `你正在向用户**确认**一个任务:「${recap}」。等用户说「对/是/开始」再执行;说「不对/取消」就放弃;` +
+        `说别的(补充/修改)就把它并进这个任务重新确认。**在用户确认前不要说任务已开始/已完成**。`,
+    );
+    this.qwenClient?.suppressNextResponse();
+  }
+
+  /** 確認 OK 後に実際にタスクを作成+実行する(合并タイマの元 dispatch を分離)。 */
+  private _executeCoalescedTask(full: string): void {
+    const now = Date.now();
+    const key = `ask_winclaw:${full.replace(/\s+/g, "").slice(0, 120)}`;
+    const last = this._recentTaskKeys.get(key);
+    if (last !== undefined && now - last < RealtimeSessionHandler._TASK_DEDUP_MS) return;
+    this._recentTaskKeys.set(key, now);
+    const callId = `voiceask-${++this._uiIntentSeq}`;
+    console.info(`[DH:${this.sessionId}] 🧠 Voice→winclaw(确认后·合并): task_run "${full.slice(0, 80)}"`);
+    this.sendToClient({
+      type: "tool_call",
+      data: { name: "task_run", args: JSON.stringify({ taskName: full }), callId },
+    });
+    this.enqueueTts("好的,这就去做,请稍等。");
+    this._armKeepAlive();
+    void this._dispatchAskWinclaw(full, callId);
+  }
+
+  /**
+   * 確認待ち中(`_pendingTaskConfirm`)の応答処理。肯定→実行、否定→破棄、それ以外→
+   * 追加/修正としてタスクへ并入し再確認。命中で true(以降の処理を止める)。
+   */
+  private _handleTaskConfirmReply(t: string): boolean {
+    if (!this._pendingTaskConfirm) return false;
+    const R = RealtimeSessionHandler;
+    const clear = () => {
+      if (this._pendingTaskConfirmTimer) clearTimeout(this._pendingTaskConfirmTimer);
+      this._pendingTaskConfirmTimer = null;
+    };
+    // 肯定 → 実行。
+    if (R._TASK_CONFIRM_YES.test(t)) {
+      const full = this._pendingTaskConfirm;
+      this._pendingTaskConfirm = null;
+      clear();
+      this._executeCoalescedTask(full);
+      this.qwenClient?.suppressNextResponse();
+      return true;
+    }
+    // 否定/取消 → 破棄。
+    if (R._TASK_CONFIRM_NO.test(t)) {
+      this._pendingTaskConfirm = null;
+      clear();
+      this.enqueueTts("好的,那这个先不做了。");
+      this._noteDhContext("用户取消了刚才要确认的任务,已放弃,不要执行。");
+      this.qwenClient?.suppressNextResponse();
+      return true;
+    }
+    // それ以外で **明確に実行系(actionable)** の発話 = 補足/修正 → 并入し再確認。
+    //   ★music/UI 等の別意図はここで捕まえず false を返し、通常処理へ委ねる(誤并入回避)。
+    if (
+      t.length >= 2 &&
+      R._ACTIONABLE_INTENT.test(t) &&
+      !RealtimeSessionHandler._isJunkTaskRequest(t)
+    ) {
+      const merged = this._pendingTaskConfirm + "。" + t;
+      this._pendingTaskConfirm = null; // _askTaskConfirm で再セット
+      clear();
+      this._askTaskConfirm(merged);
+      return true;
+    }
+    // 肯定/否定/補足のいずれでもない(相槌・別意図)→ 確認待ちは維持し、通常処理へ委ねる。
+    return false;
+  }
+
+  /**
+   * ask_winclaw を tool-router 経由で実行し、**真の成否**を数字人へ返す(捏造しない)。
+   * winclaw 返り値(status/summary/user_message/error)を解析し、成功=要約、失敗=理由を
+   * 播報+コンテキスト注入。「成功と嘘をつく(胡说八道)」を防ぐ。
+   */
+  private async _dispatchAskWinclaw(request: string, callId: string): Promise<void> {
+    const short = request.slice(0, 30);
+    if (!this.toolRouter) {
+      this.enqueueTts("抱歉,现在没法执行这个任务。");
+      this._noteDhContext(`任务「${short}」**执行失败**:winclaw 未就绪。如实告诉用户失败。`);
+      return;
+    }
+    try {
+      // ★task_run で発火する事が肝心: handleTaskRun は writeSecretaryInbox(source:"voice")で
+      //   **受管任务を作成** → ai-meta poller が claim → winclaw metacoder が実行 → 成果物。
+      //   ask_winclaw は転送のみで**任务を作らない**(=「任务没有创建」の原因だった)。
+      //   taskName に自然語要求をそのまま入れ、metacoder に解釈・実行させる。
+      // ★A案(成果物リンク): metacoder は自由に作業目录を選ぶ為、成果物が
+      //   sessions/<自由名>/ 等へ散り任务の output_rel に紐付かない(面板で見えない)。
+      //   保存先を工作区 `outputs/` 直下へ寄せるよう明示指示する(後端 B 兜底が
+      //   outputs/ と sessions/ を時間窓で拾う二段構え)。
+      const taskNameWithOut =
+        request +
+        "\n\n★成果物の保存先(重要): レポート/PDF/文档/表格などの最終成果物は、必ず" +
+        "工作区の `outputs/` 目录**直下**に保存してください(勝手なサブ目录を作らない)。" +
+        "ファイル名は内容が分かる名前にしてください。";
+      const result = await this.toolRouter.handle({
+        name: "task_run",
+        argumentsJson: JSON.stringify({ taskName: taskNameWithOut, args: {} }),
+        callId,
+      } as import("./integrations/qwen-realtime.js").QwenFunctionCall);
+      let status: "ok" | "failed" = "ok";
+      let summary = "";
+      let errorMsg = "";
+      try {
+        const p = JSON.parse(result) as {
+          status?: string;
+          summary?: string;
+          user_message?: string;
+          error?: string;
+        };
+        status = p.status === "failed" ? "failed" : "ok";
+        summary = (p.summary || p.user_message || "").trim();
+        errorMsg = (p.error || "").trim();
+      } catch {
+        summary = (result || "").slice(0, 200);
+      }
+      this.sendToClient({
+        type: "tool_result",
+        data: { name: "task_run", callId, status, summary, error: errorMsg },
+      });
+      if (status === "failed") {
+        this.enqueueTts(`抱歉,这个任务没能完成${errorMsg ? `,${errorMsg.slice(0, 40)}` : ""}。`);
+        this._noteDhContext(`任务「${short}」**执行失败**${errorMsg ? `(${errorMsg.slice(0, 60)})` : ""}。**如实告诉用户失败,绝不能说成功**。`);
+      } else {
+        // ★重要修正(2026-07-10・胡说八道の根治): task_run の return は
+        //   「已提交/(場合により)后台結果」であり、**成果物ファイル(PDF/报告)が
+        //   出来た保証にはならない**。metacoder は多くの場合「調べますね」等と答えるだけで
+        //   ファイルを書かない事がある。従来は無条件に「执行成功」と注入していた為、DH が
+        //   「已生成PDF」と嘘をついた。よって成功と断定せず、**返ってきた実結果をそのまま
+        //   渡し、結果に明示が無い限り「ファイル/PDF 生成」を口にするなと強く釘を刺す**。
+        //   TTS は追加で喋らない(_tryVoiceAskWinclaw で ack 済=二重発声回避)。
+        const resultText = (summary || "").slice(0, 200);
+        this._noteDhContext(
+          `任务「${short}」的后台返回:「${resultText || "(已提交,处理中)"}」。` +
+            `★如实转述这个返回内容即可。**除非上面的返回里明确写了"已生成/已保存 某文件/PDF/报告",否则绝对不要说你生成了PDF、报告或任何文件**。` +
+            `也不要编造数据或结论;还没结果就说「还在处理中,稍等」。`,
+        );
+      }
+      // ★winclaw 記憶へ記録(ユーザ要件「执行过的任务都要进记忆」)。提交した任务と
+      //   後台返回を memory/YYYY-MM-DD.md へ落とし、次回以降 memory_search で召回可能に。
+      try {
+        this.memoryBridge?.recordTaskResult(
+          `语音任务: ${short}`,
+          (summary || "").slice(0, 200) || "已提交后台处理",
+          status !== "failed",
+        );
+      } catch {
+        /* best-effort */
+      }
+    } catch (err) {
+      console.error(`[DH:${this.sessionId}] voice ask_winclaw failed:`, err);
+      this.enqueueTts("抱歉,这个任务执行时出错了,待会儿再试试。");
+      this._noteDhContext(`任务「${short}」**执行出错**(${err instanceof Error ? err.message.slice(0, 60) : "unknown"})。如实告知用户,别谎报成功。`);
+    }
   }
 
   /** 既存の tool_call 転送路で client へ ui_action を下達(Qwen 経由と同形)。 */
@@ -1749,6 +2243,12 @@ export class RealtimeSessionHandler {
       `[DH:${this.sessionId}] 🎛️ Voice→UI(兜底): ui_action ${target}/${action}${name ? ` name="${name}"` : ""}`,
     );
     this.sendToClient({ type: "tool_call", data: { name: "ui_action", args, callId } });
+    // 基础界面操作(面板/麦/摄/形象/字幕/全屏/音色/成果物)を Qwen 上下文へ集中回灌し
+    // 数字人が「自分が界面を操作した」事を自知できるようにする(問題②)。
+    // music / task_artifact / task_continue は各兜底で**具体的に**回灌済のためスキップ(二重回灌回避)。
+    if (!["music", "task_artifact", "task_continue"].includes(target)) {
+      this._noteDhContext(`已为用户执行界面操作:${target} ${action}${name ? `(${name})` : ""}。`);
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -1766,12 +2266,50 @@ export class RealtimeSessionHandler {
     const t = transcript.trim();
     if (!t || t.length > 40) return false;
 
-    // 1) 具体的な点歌(曲名を抽出できたら最優先。pending/再生中を上書き)。
-    const parsed = this._parseMusicIntent(t);
-    if (parsed) {
-      this._pendingMusic = null;
+    // 0) ★「再放一遍/刚才那首」= キャッシュした直近トラックを **URL 再解決なし** に即再生。
+    //    灵敏化 + 音乐記憶の実用化(検索抽風を避け、mp3 path を憶えている強み)。
+    if (R._MUSIC_REPLAY.test(t) && this._lastMusicTrack) {
       this.sendToClient({ type: "user_transcript", data: { content: transcript } });
-      void this._doMusicPlay(parsed.artist, parsed.song);
+      this._pendingMusic = null;
+      this._playTrack(this._lastMusicTrack);
+      this.enqueueTts(`好的,再放一遍《${this._lastMusicTrack.title}》。`);
+      return true;
+    }
+
+    // ★1) 点歌の片段合并: 「放…」「青花瓷」「好不好」の様な断続語音を 1 曲へまとめて検索する。
+    //   強トリガ/曲名 parse 成立/収集窗中 の発話をバッファへ追記し ~1.4s 無音で parse+play。
+    //   バレ曲名(トリガ無しの「青花瓷」)も収集窗中なら吸収する = 命中率が上がる。
+    //   ★制御語(停/换/暂停/继续)は再生中なら収集せず素通し(下の control で即処理)。
+    const isCtl =
+      R._MUSIC_STOP.test(t) || R._MUSIC_NEXT.test(t) || R._MUSIC_PAUSE.test(t) || R._MUSIC_RESUME.test(t);
+    const hasSongSignal =
+      !!this._parseMusicIntent(t) ||
+      R._MUSIC_TRIGGER.test(t) ||
+      (R._MUSIC_WEAK_VERB.test(t) && R._MUSIC_CTX.test(t));
+    if ((this._musicListening || hasSongSignal) && !(this._musicActive && isCtl)) {
+      this._musicListening = true;
+      this._pendingMusic = null;
+      this._musicCoalesceBuffer = this._musicCoalesceBuffer
+        ? this._musicCoalesceBuffer + t
+        : t;
+      this.sendToClient({ type: "user_transcript", data: { content: transcript } });
+      if (this._musicCoalesceTimer) clearTimeout(this._musicCoalesceTimer);
+      this._musicCoalesceTimer = setTimeout(() => {
+        const full = this._musicCoalesceBuffer;
+        this._musicCoalesceBuffer = "";
+        this._musicListening = false;
+        this._musicCoalesceTimer = null;
+        const p = this._parseMusicIntent(full);
+        if (p) {
+          console.info(`[DH:${this.sessionId}] 🎵 点歌合并 → 搜索「${p.artist ? p.artist + "的" : ""}${p.song}」(原文:${full.slice(0, 40)})`);
+          void this._doMusicPlay(p.artist, p.song);
+          this._noteDhContext(
+            `正在为用户搜索并播放${p.artist ? p.artist + "的" : ""}《${p.song}》音乐(音乐播放能力已触发)。`,
+          );
+        } else {
+          console.info(`[DH:${this.sessionId}] 🎵 点歌合并 → 曲名抽出できず(原文:${full.slice(0, 40)})`);
+        }
+      }, RealtimeSessionHandler._MUSIC_COALESCE_MS);
       return true;
     }
 
@@ -1782,12 +2320,14 @@ export class RealtimeSessionHandler {
       if (R._MUSIC_PAUSE.test(t)) {
         this._dispatchUiAction("music", "pause");
         this.enqueueTts("好的,先暂停。");
+        this._noteDhContext("已暂停音乐播放。");
         return true;
       }
       // 2b) 恢复/继续。
       if (R._MUSIC_RESUME.test(t) && this._musicActive) {
         this._dispatchUiAction("music", "resume");
         this.enqueueTts("好的,继续播放。");
+        this._noteDhContext("已继续播放音乐。");
         return true;
       }
       // 2c) 换一首/下一首 → 同歌手の別曲へ差替。
@@ -1802,6 +2342,7 @@ export class RealtimeSessionHandler {
         this._pendingMusic = null;
         this._dispatchUiAction("music", "stop");
         this.enqueueTts("好的,已经停下了。");
+        this._noteDhContext("已停止音乐播放。");
         return true;
       }
     }
@@ -1819,6 +2360,7 @@ export class RealtimeSessionHandler {
         this._lastMusicArtist = p.artist || this._lastMusicArtist;
         this._playTrack(p.track);
         this.enqueueTts(`好的,为你循环播放《${p.track.title}》。`);
+        this._noteDhContext(`已开始循环播放《${p.track.title}》。`);
         return true;
       }
       // 肯定でも否定でもない発話 → 提案は失効。以降の通常処理に委ねる。
@@ -1881,8 +2423,24 @@ export class RealtimeSessionHandler {
     }
     // 先頭の「这首/那首/一首」だけ剥がす(曲名末尾の「歌」は 生日歌/国歌 等で残す)。
     song = song.replace(/^(这|這|那)?(首|一首)?/, "").trim();
+    // ★2026-07-10: 曲名末尾の口語/疑問(「青花瓷好不好」→「青花瓷」)を剥がす。ASR で語尾に
+    //   混じる「好不好/行吗/可以吗/谢谢…」が検索を汚し命中率を下げる。**剥いても 2 字以上残る
+    //   時だけ**適用(「好不好」単体=康小白の曲は保持)。
+    const _stripTail = song
+      .replace(
+        /(好不好|好不好呀|好吗|好嗎|好嘛|行不行|行吗|行嗎|可以吗|可以嗎|可不可以|怎么样|怎麼樣|如何|谢谢你?|謝謝你?|多谢|拜托你?|拜託|麻烦你?|呗|唄|嘛|哈|呀|哦|噢|喔|嘞|啦)+[?？!！。.,，\s]*$/g,
+        "",
+      )
+      .trim();
+    if (_stripTail.length >= 2) song = _stripTail;
     if (!song || song.length < 1 || song.length > 20) return null;
-    if (/^(歌|歌曲|音乐|音樂|一首|首歌)$/.test(song)) return null;
+    // ★D: 誤爆防止。曲名になり得ない generic/代名詞(「我想听你唱歌」→ song="你" 等)を弾く。
+    if (
+      /^(歌|歌曲|音乐|音樂|一首|首歌|你|我|他|她|它|您|你们|你們|我们|我們|咱|大家|这|那|這|什么|什麼|啥|点|點|一下|一点|一點|别的|別的|什么歌|什麼歌|首|个|個)$/.test(
+        song,
+      )
+    )
+      return null;
     if (artist.length > 12) artist = "";
     return { artist, song };
   }
@@ -1910,14 +2468,18 @@ export class RealtimeSessionHandler {
         this.enqueueTts(`好的,为你循环播放《${track.title}》。`);
         return;
       }
-      // 未命中 → 同歌手の別曲を提案(勝手に再生しない・§8-3)。
-      const rec = artist ? await recommendMusic(artist, song) : null;
-      if (rec) {
-        this._pendingMusic = { track: rec, artist };
-        this.enqueueTts(`没有找到《${song}》。要不要放${artist}的《${rec.title}》?`);
-      } else {
-        this.enqueueTts(`抱歉,没有找到《${song}》。你可以换一首试试。`);
+      // ★B: 未命中は **まず即座に**「没找到」を出す(recommend を待たせない=無音防止)。
+      this.enqueueTts(`没有找到《${song}》。`);
+      // 歌手が判れば同歌手の別曲を提案(勝手に再生しない・§8-3)。無ければ換歌を促す。
+      if (artist) {
+        const rec = await recommendMusic(artist, song);
+        if (rec) {
+          this._pendingMusic = { track: rec, artist };
+          this.enqueueTts(`要不要放${artist}的《${rec.title}》?`);
+          return;
+        }
       }
+      this.enqueueTts("你可以换一首,或者说得更具体点试试。");
     } catch (err) {
       console.error(`[DH:${this.sessionId}] music search failed:`, err);
       this.enqueueTts("抱歉,音乐搜索出错了,待会儿再试试。");
@@ -1925,9 +2487,27 @@ export class RealtimeSessionHandler {
   }
 
   /** client へ music_play を下達(封面/歌名/歌手/循环 を name=JSON で渡す)。 */
+  /** ai-meta 後端の公開 music-proxy(host 白名单)を指す base。ブラウザ <audio> が同源 https で
+   *  再生できるよう、音楽 CDN 直リンクをここ経由へ書換える。この deploy の後端は固定。 */
+  private static readonly _AIMETA_BASE = (
+    process.env.AIMETA_API_BASE ||
+    process.env.WINCLAW_GRC_URL ||
+    "https://api.myaiportal.net"
+  ).replace(/\/+$/, "");
+
+  /** 音楽 CDN 直リンクを後端 proxy 経由(同源)へ書換える。http(s) 以外/空/二重は素通し。 */
+  private static _proxyMusicUrl(url: string): string {
+    if (!url || !/^https?:\/\//i.test(url)) return url;
+    if (url.includes("/api/v1/music-proxy")) return url; // 二重 proxy 防止
+    return `${RealtimeSessionHandler._AIMETA_BASE}/api/v1/music-proxy?url=${encodeURIComponent(url)}`;
+  }
+
   private _playTrack(track: MusicTrack): void {
     const payload = JSON.stringify({
-      playUrl: track.playUrl,
+      // ★2026-07-10: netease 等の直リンクはブラウザ直再生が hotlink/跨域で失敗する為、
+      //   ai-meta 後端の公開 proxy(host 白名单)経由 = **同源 https** へ書換えて渡す。
+      //   後端が Referer を付けて CDN から取得しストリームするので CSP media-src 'self' で再生可。
+      playUrl: RealtimeSessionHandler._proxyMusicUrl(track.playUrl),
       title: track.title,
       artist: track.artist,
       cover: track.cover ?? "",
@@ -1940,6 +2520,38 @@ export class RealtimeSessionHandler {
     // 再生中フラグ + 直近曲名(换一首の除外用)を更新。
     this._musicActive = true;
     this._lastMusicTitle = track.title;
+    // ★音乐記憶: 直近トラック(mp3 path 込み)+ 履歴を更新。DH に「今この曲を再生した」を
+    //   回灌し、「刚才放的什么歌」に答え・「再放一遍」で即再生できる様にする。
+    this._lastMusicTrack = track;
+    if (track.playUrl) {
+      this._musicHistory.push({
+        title: track.title,
+        artist: track.artist,
+        playUrl: track.playUrl,
+        source: track.source,
+        at: Date.now(),
+      });
+      if (this._musicHistory.length > 30) this._musicHistory.shift();
+    }
+    const recent = this._musicHistory
+      .slice(-5)
+      .map((m) => `《${m.title}》`)
+      .join("、");
+    this._noteDhContext(
+      `你刚为用户播放了《${track.title}》(${track.artist})。**记住这首是当前正在放的歌**。` +
+        `用户问"刚才放的什么歌/这是什么歌"就答《${track.title}》;说"再放一遍/刚才那首"就是要重播它。` +
+        (recent ? `本次会话已放过:${recent}。` : ""),
+    );
+    // ★winclaw 記憶へも記録(gemini-embedding 索引 → 次回以降 memory_search で召回可能)。
+    try {
+      this.memoryBridge?.recordTaskResult(
+        "播放音乐",
+        `《${track.title}》 - ${track.artist}(来源 ${track.source})`,
+        true,
+      );
+    } catch {
+      /* best-effort */
+    }
     this._dispatchUiAction("music", "play", payload);
   }
 
@@ -2033,6 +2645,24 @@ export class RealtimeSessionHandler {
     this.ttsQueue.push(text);
     if (!this.ttsInProgress) {
       this.processNextTts();
+    }
+  }
+
+  /**
+   * 转写兜底(_tryVoiceMusic / _tryVoiceUiIntent / _tryVoiceTaskArtifact /
+   * _tryVoiceTaskContinue)で実行した**動作+結果**を Qwen 会話コンテキストへ
+   * **静かに**注入する(injectContext=`conversation.item.create` のみ・
+   * `response.create` なし=追加発声しない)。
+   *
+   * enqueueTts の確認語は別系統の HTTP TTS で喋る為 Qwen は関知しない。この注入で
+   * 数字人が「自分が今何をして、どうなったか(状態)」を次ターンで把握でき、
+   * 「さっきの曲かかった?」等の追問にも正しく答えられる(能力調用状態の自知・問題②)。
+   */
+  private _noteDhContext(note: string): void {
+    try {
+      this.qwenClient?.injectContext(`[系统事件·你刚为用户执行了操作] ${note}`);
+    } catch {
+      /* best-effort: 認識用のみ。失敗しても本筋に影響させない */
     }
   }
 

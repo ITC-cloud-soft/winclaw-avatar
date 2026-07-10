@@ -350,7 +350,11 @@ export class MemoryBridge {
     for (let i = 0; i < dates.length; i++) {
       const content = contents[i];
       if (content !== null) {
-        parts.push(`[${labels[i]}的记忆摘要]\n${this.headTruncate(content, 500)}`);
+        // ★2026-07-10 修正(重大バグ): 従来 headTruncate(先頭500字)= **最古**の会話を
+        //   読んでいた。記憶ファイルは append(新しい程末尾)なので、直近の事実(生日等)は
+        //   **末尾**に在る。よって tailTruncate(末尾2000字)= 最近の会話を読む。500→2000 で
+        //   直近の事実(誕生日/好み/約束)を取りこぼさない様にする。
+        parts.push(`[${labels[i]}的记忆摘要]\n${this.tailTruncate(content, 2000)}`);
       }
     }
 
@@ -494,6 +498,19 @@ export class MemoryBridge {
   private headTruncate(text: string, maxLen: number): string {
     if (text.length <= maxLen) return text;
     return text.substring(0, maxLen) + "...";
+  }
+
+  /**
+   * Keep the **last** `maxLen` chars (most recent appended entries). Memory
+   * files grow by append so recent facts live at the tail — preload must read
+   * the tail, not the head. Cuts at a line boundary to avoid a mangled first line.
+   */
+  private tailTruncate(text: string, maxLen: number): string {
+    if (text.length <= maxLen) return text;
+    let tail = text.substring(text.length - maxLen);
+    const nl = tail.indexOf("\n");
+    if (nl > 0 && nl < 200) tail = tail.substring(nl + 1);
+    return "...\n" + tail;
   }
 
   /**

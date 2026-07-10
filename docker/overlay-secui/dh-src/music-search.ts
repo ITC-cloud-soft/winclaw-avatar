@@ -38,13 +38,17 @@ interface RawTrack {
 }
 
 const GD_API = "https://music-api.gdstudio.xyz/api.php";
-/** 実測で playUrl を返す音源のみ(順=優先度)。 */
-const SOURCES = ["netease", "joox"] as const;
+/** 音源(並行に引き最初に再生可能を返した物を採る)。実測で netease/joox が主力
+ *  (周杰伦等は netease で版権ロック→joox で命中)。kuwo/tencent/migu は playUrl を
+ *  返す曲もある為 **多源化**して命中率を上げる(2026-07-10・ユーザ要件「多音乐搜索」)。
+ *  死んだ源は null を返すだけ(firstNonNull が有効源を採る)。 */
+const SOURCES = ["netease", "joox", "kuwo", "tencent", "migu"] as const;
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 
-/** fetch に UA/Referer を付け、タイムアウト付きで JSON を取る(失敗は null)。 */
-async function gdFetchJson(url: string, timeoutMs = 12_000): Promise<unknown> {
+/** fetch に UA/Referer を付け、タイムアウト付きで JSON を取る(失敗は null)。
+ *  ★A(docs/20 灵敏化): 既定 12s→5s。未命中/hang 時の待ちを短縮し「没找到」を早く返す。 */
+async function gdFetchJson(url: string, timeoutMs = 5_000): Promise<unknown> {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), timeoutMs);
   try {
@@ -131,79 +135,107 @@ function scoreCandidate(cand: RawTrack, artist: string, song: string): number {
   return score;
 }
 
-/**
- * artist(任意)+ song で best-match の 1 曲を解決する。SOURCES を順に試し、
- * スコア上位から playUrl を取り、**最初に再生 URL が取れた曲**を返す。全滅で null。
- */
-export async function searchMusic(artist: string, song: string): Promise<MusicTrack | null> {
-  const a = (artist || "").trim();
-  const s = (song || "").trim();
-  if (!s) return null;
-  // 歌手名も検索語に混ぜると命中率が下がる音源があるため、まず曲名で引く。
-  const keyword = s;
-  for (const source of SOURCES) {
-    const raw = await gdSearch(source, keyword);
-    if (raw.length === 0) continue;
-    const ranked = raw
-      .map((c) => ({ c, sc: scoreCandidate(c, a, s) }))
-      .filter((x) => x.sc > 0)
-      .sort((x, y) => y.sc - x.sc);
-    // 上位 4 件だけ playUrl を試す(空 URL を返す音源対策)。
-    for (const { c } of ranked.slice(0, 4)) {
-      const playUrl = await gdPlayUrl(source, c.id);
-      if (!playUrl) continue;
-      const cover = await gdCover(source, c.pic_id);
-      return {
-        title: c.name,
-        artist: c.artist.join("/") || a,
-        playUrl,
-        cover,
-        source,
-        id: String(c.id),
-      };
+/** per-source 全体タイムアウト(hang した音源が全体を止めないように)。 */
+const SOURCE_TIMEOUT_MS = 8_000;
+
+/** hang 対策の全体タイムアウト付きラッパ(失敗/超時は null)。 */
+function withSourceTimeout(p: Promise<MusicTrack | null>): Promise<MusicTrack | null> {
+  return Promise.race([
+    p.catch(() => null),
+    new Promise<null>((r) => setTimeout(() => r(null), SOURCE_TIMEOUT_MS)),
+  ]);
+}
+
+/** 複数音源の Promise 群から **最初に非 null を返したもの** を採る。全 null なら null。
+ *  ★A: 直列待ちを避け、命中は最速で返し、未命中は全音源が尽きた時のみ null。 */
+function firstNonNull(promises: Promise<MusicTrack | null>[]): Promise<MusicTrack | null> {
+  return new Promise((resolve) => {
+    let remaining = promises.length;
+    let settled = false;
+    if (remaining === 0) return resolve(null);
+    for (const p of promises) {
+      p.then((r) => {
+        if (settled) return;
+        if (r) {
+          settled = true;
+          resolve(r);
+        } else if (--remaining === 0) {
+          resolve(null);
+        }
+      }).catch(() => {
+        if (!settled && --remaining === 0) resolve(null);
+      });
     }
+  });
+}
+
+/** 1 音源で (artist, song) の best-match 再生可能曲を解決(無ければ null)。 */
+async function resolveTrackFromSource(source: string, a: string, s: string): Promise<MusicTrack | null> {
+  const raw = await gdSearch(source, s);
+  if (raw.length === 0) return null;
+  const ranked = raw
+    .map((c) => ({ c, sc: scoreCandidate(c, a, s) }))
+    .filter((x) => x.sc > 0)
+    .sort((x, y) => y.sc - x.sc);
+  // 上位 3 件だけ playUrl を試す(空 URL を返す音源対策・高速化で 4→3)。
+  for (const { c } of ranked.slice(0, 3)) {
+    const playUrl = await gdPlayUrl(source, c.id);
+    if (!playUrl) continue;
+    const cover = await gdCover(source, c.pic_id);
+    return { title: c.name, artist: c.artist.join("/") || a, playUrl, cover, source, id: String(c.id) };
+  }
+  return null;
+}
+
+/** 1 音源で歌手の別曲を 1 曲提案(excludeTitle 除外)。無ければ null。 */
+async function recommendFromSource(
+  source: string,
+  a: string,
+  nEx: string,
+  nArtist: string,
+): Promise<MusicTrack | null> {
+  const raw = await gdSearch(source, a, 20);
+  if (raw.length === 0) return null;
+  const pool = raw.filter((c) => norm(c.name) !== nEx);
+  const strict = pool.filter((c) =>
+    c.artist.map(norm).some((x) => x === nArtist || x.includes(nArtist) || nArtist.includes(x)),
+  );
+  const ranked = (strict.length ? strict : pool)
+    .map((c) => ({ c, sc: scoreCandidate(c, a, "") }))
+    .sort((x, y) => y.sc - x.sc);
+  for (const { c } of ranked.slice(0, 5)) {
+    const playUrl = await gdPlayUrl(source, c.id);
+    if (!playUrl) continue;
+    const cover = await gdCover(source, c.pic_id);
+    return { title: c.name, artist: c.artist.join("/") || a, playUrl, cover, source, id: String(c.id) };
   }
   return null;
 }
 
 /**
- * 同歌手の別曲を 1 曲提案する(兜底用)。excludeTitle と同名は除外。
- * 歌手名で検索 → その歌手のヒットからスコア上位 → 再生 URL の取れる 1 曲。無ければ null。
+ * artist(任意)+ song で best-match の 1 曲を解決する。
+ * ★A: netease/joox を **並行**に引き、最初に再生可能曲を返した音源を採る。全滅で null。
+ * 未命中の待ちを直列 ~24s+ → 並行 ~8s(SOURCE_TIMEOUT_MS)へ短縮する。
  */
-export async function recommendMusic(
-  artist: string,
-  excludeTitle = "",
-): Promise<MusicTrack | null> {
+export async function searchMusic(artist: string, song: string): Promise<MusicTrack | null> {
+  const a = (artist || "").trim();
+  const s = (song || "").trim();
+  if (!s) return null;
+  return firstNonNull(
+    SOURCES.map((src) => withSourceTimeout(resolveTrackFromSource(src, a, s))),
+  );
+}
+
+/**
+ * 同歌手の別曲を 1 曲提案する(兜底用)。excludeTitle と同名は除外。
+ * ★A: 音源を並行に引き、最初の再生可能曲を返す。無ければ null。
+ */
+export async function recommendMusic(artist: string, excludeTitle = ""): Promise<MusicTrack | null> {
   const a = (artist || "").trim();
   if (!a) return null;
   const nEx = norm(excludeTitle);
   const nArtist = norm(a);
-  for (const source of SOURCES) {
-    const raw = await gdSearch(source, a, 20);
-    if (raw.length === 0) continue;
-    // 除外曲を落とした全候補(検索語=歌手名なので概ねその歌手の曲)。
-    const pool = raw.filter((c) => norm(c.name) !== nEx);
-    // その歌手一致に限定。ただし简繁差(周杰伦 vs 周杰倫)や音源都合で空になり得るので、
-    // 空なら pool 全体にフォールバック(勝手に別歌手になるより「その歌手で検索した曲」を出す)。
-    const strict = pool.filter((c) =>
-      c.artist.map(norm).some((x) => x === nArtist || x.includes(nArtist) || nArtist.includes(x)),
-    );
-    const ranked = (strict.length ? strict : pool)
-      .map((c) => ({ c, sc: scoreCandidate(c, a, "") }))
-      .sort((x, y) => y.sc - x.sc);
-    for (const { c } of ranked.slice(0, 5)) {
-      const playUrl = await gdPlayUrl(source, c.id);
-      if (!playUrl) continue;
-      const cover = await gdCover(source, c.pic_id);
-      return {
-        title: c.name,
-        artist: c.artist.join("/") || a,
-        playUrl,
-        cover,
-        source,
-        id: String(c.id),
-      };
-    }
-  }
-  return null;
+  return firstNonNull(
+    SOURCES.map((src) => withSourceTimeout(recommendFromSource(src, a, nEx, nArtist))),
+  );
 }

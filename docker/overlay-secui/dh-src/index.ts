@@ -734,6 +734,9 @@ export default function digitalHumanPlugin(api: WinClawPluginApiMinimal): void {
       if (req.method !== "GET") return false;
       const u = new URL(req.url ?? "/", "http://localhost");
       const relDir = (u.searchParams.get("dir") ?? "").replace(/\\/g, "/").replace(/^\/+/, "");
+      // ★recursive=1: サブディレクトリまで再帰的に列挙する(語音タスクの成果物は
+      //   metacoder が sessions/<自由名>/ 等の子目录へ書く為、後端の兜底 scan に要る)。
+      const recursive = u.searchParams.get("recursive") === "1";
       if (relDir.split("/").some((p) => p === "..")) {
         jsonResponse(res, 400, { error: "invalid dir" });
         return true;
@@ -750,20 +753,40 @@ export default function digitalHumanPlugin(api: WinClawPluginApiMinimal): void {
         "HEARTBEAT.md", "BOOTSTRAP.md", "TASKS.md", "MEMORY.md",
       ]);
       const OK = /\.(html?|pdf|md|txt|csv|json|png|jpe?g|gif|svg|webp|js|css|py|docx|pptx|xlsx)$/i;
-      let ents: Awaited<ReturnType<typeof readdir>>;
+      const files: Array<{ name: string; path: string; size: number; mtime: number }> = [];
       try {
-        ents = await readdir(absDir, { withFileTypes: true });
+        if (recursive) {
+          // 再帰列挙。node_modules/.dotdir はスキップ(withFileTypes + parentPath で相対化)。
+          const ents = await readdir(absDir, { withFileTypes: true, recursive: true });
+          for (const e of ents) {
+            if (!e.isFile()) continue;
+            if (e.name.startsWith(".") || EXCLUDE.has(e.name) || !OK.test(e.name)) continue;
+            // parentPath(Node20+)= エントリを含む絶対ディレクトリ。root からの相対に直す。
+            const parent = (e as unknown as { parentPath?: string; path?: string }).parentPath
+              ?? (e as unknown as { path?: string }).path
+              ?? absDir;
+            const abs = join(parent, e.name);
+            // 除外ディレクトリ配下はスキップ(パスに /node_modules/ 等を含む場合)。
+            const relFromRoot = abs.slice(root.length + 1).split(sep).join("/");
+            if (relFromRoot.split("/").some((seg) => EXCLUDE.has(seg) || (seg.startsWith(".") && seg !== e.name))) continue;
+            try {
+              const st = await stat(abs);
+              files.push({ name: e.name, path: relFromRoot, size: st.size, mtime: st.mtimeMs });
+            } catch { /* skip unreadable */ }
+          }
+        } else {
+          const ents = await readdir(absDir, { withFileTypes: true });
+          for (const e of ents) {
+            if (e.name.startsWith(".") || EXCLUDE.has(e.name) || !e.isFile() || !OK.test(e.name)) continue;
+            try {
+              const st = await stat(join(absDir, e.name));
+              files.push({ name: e.name, path: relDir ? `${relDir}/${e.name}` : e.name, size: st.size, mtime: st.mtimeMs });
+            } catch { /* skip unreadable */ }
+          }
+        }
       } catch {
         jsonResponse(res, 404, { error: "not found" });
         return true;
-      }
-      const files: Array<{ name: string; path: string; size: number; mtime: number }> = [];
-      for (const e of ents) {
-        if (e.name.startsWith(".") || EXCLUDE.has(e.name) || !e.isFile() || !OK.test(e.name)) continue;
-        try {
-          const st = await stat(join(absDir, e.name));
-          files.push({ name: e.name, path: relDir ? `${relDir}/${e.name}` : e.name, size: st.size, mtime: st.mtimeMs });
-        } catch { /* skip unreadable */ }
       }
       files.sort((a, b) => b.mtime - a.mtime);
       jsonResponse(res, 200, { files });

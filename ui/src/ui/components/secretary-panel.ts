@@ -269,6 +269,9 @@ export class SecretaryPanel extends LitElement {
   private _unsubLocale: (() => void) | null = null;
   private pollTimer: number | null = null;
   private refreshTimer: number | null = null;
+  // ★成果物の自動紐付け(2026-07-10): 前回リフレッシュ時の各タスク status。運行中/完成直後の
+  //   タスクへ GET /tasks/{id} を自動発火し backend の B 兜底(成果物 pull)を起こす為。
+  private _lastStatuses = new Map<number, string>();
   // 既知の成果物ファイル名 — 新規出現を検知して数字人の音声通知トリガに使う。
   private _knownNodeFiles = new Set<string>();
   private _loaded = false;
@@ -329,9 +332,43 @@ export class SecretaryPanel extends LitElement {
   private startRefresh(): void {
     if (this.refreshTimer != null) return;
     this.refreshTimer = window.setInterval(() => {
-      void this.loadTasks();
+      void this.loadTasks().then(() => this._autoLinkArtifacts());
       void this.loadNodeFiles();
     }, REFRESH_MS);
+  }
+
+  /**
+   * ★成果物の自動紐付け(2026-07-10・ユーザ要件): 完成を宣言したのに成果物が出ない問題の
+   * 根治。backend の B 兜底(node の outputs/sessions を pull し Artifact 化)は **GET /tasks/{id}**
+   * でしか走らないが、従来は**選択タスクの pollTimer のみ**が叩いていた為、開いていないタスクは
+   * 完成後も紐付かず「刷新するまで空」だった。ここで自動リフレッシュ毎に **運行中 or 完成直後**
+   * (前回から status が変化)のタスクへ GET を撃ち、成果物を自動で引き込む(手動刷新不要)。
+   * 過負荷防止に最新 5 件まで。選択中タスクなら artifacts も即反映。
+   */
+  private async _autoLinkArtifacts(): Promise<void> {
+    if (!this.enabled) return;
+    const prev = this._lastStatuses;
+    const next = new Map<number, string>();
+    const toPull: number[] = [];
+    for (const tk of this.tasks) {
+      next.set(tk.id, tk.status);
+      // 運行中、または 前回と status が変わった(完成直後含む)タスク。
+      if (ACTIVE.has(tk.status) || tk.status !== prev.get(tk.id)) toPull.push(tk.id);
+    }
+    this._lastStatuses = next;
+    // 過負荷防止: 直近 5 件のみ(tasks は新しい順)。
+    for (const id of toPull.slice(0, 5)) {
+      try {
+        const r = await fetch(this.url(`/tasks/${id}`), { headers: this.authHeaders() });
+        if (!r.ok) continue;
+        // 選択中タスクなら成果物一覧も即更新(pullDetail と同旨)。
+        if (id === this.selectedId) {
+          const d = (await r.json()) as { task: Task; artifacts: Artifact[] };
+          this.detailStatus = d.task.status;
+          this.artifacts = d.artifacts ?? [];
+        }
+      } catch { /* transient */ }
+    }
   }
   private stopRefresh(): void {
     if (this.refreshTimer != null) { clearInterval(this.refreshTimer); this.refreshTimer = null; }

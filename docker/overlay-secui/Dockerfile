@@ -53,6 +53,24 @@ RUN cd /usr/local/lib/node_modules/winclaw/extensions/digital-human \
  && npm install --no-audit --no-fund --save kuromoji@0.1.2 \
  && rm -rf /root/.npm
 
+# ★pdf.worker.mjs 補完: coding-engine の index.mjs は同ディレクトリの `./pdf.worker.mjs`
+#   を import するが、winclaw dist 同梱漏れで **dist/coding-engine/pdf.worker.mjs が無く**、
+#   PDF 回読/検証が "Cannot find module .../pdf.worker.mjs" で失敗 → タスクが成果物(PDF)を
+#   生成しても "回読検証" で落ち **完了マークされず running のまま**になる(実測: NVIDIA
+#   財務分析タスク)。pdfjs-dist の実体を coding-engine 直下へ配置し import を解決する。
+# ★版本一致(2026-07-10 修正): node_modules の pdfjs-dist は 5.7.284 だが、coding-engine が
+#   **内联している pdfjs API は 5.4.296**。前は node_modules の worker(5.7.284)を貼っていた為、
+#   PDF 回読で "API version 5.4.296 does not match Worker version 5.7.284" で落ち、タスクが
+#   PDF を生成しても検証で失敗し**完了しない**(実機 NVIDIA 財務報告)。coding-engine の API に
+#   **正確に一致する 5.4.296 の worker** を /tmp へ pin install して貼る(node_modules は不変)。
+RUN cd /tmp && npm init -y >/dev/null 2>&1 \
+ && npm install --no-audit --no-fund --no-save pdfjs-dist@5.4.296 \
+ && cp /tmp/node_modules/pdfjs-dist/build/pdf.worker.mjs \
+       /usr/local/lib/node_modules/winclaw/dist/coding-engine/pdf.worker.mjs \
+ && node -e "const s=require('fs').readFileSync('/usr/local/lib/node_modules/winclaw/dist/coding-engine/pdf.worker.mjs','utf8'); if(!s.includes('5.4.296')) throw new Error('pdf.worker version mismatch — expected 5.4.296'); console.log('pdf.worker pinned to 5.4.296 OK')" \
+ && rm -rf /tmp/node_modules /tmp/package.json /tmp/package-lock.json /root/.npm \
+ && ls -la /usr/local/lib/node_modules/winclaw/dist/coding-engine/pdf.worker.mjs
+
 # ---- 高頻変更層(control-ui / dh-src)は末尾 → chromium レイヤを再利用 ----
 # cachebust: --build-arg で毎回変え、control-ui/dh-src の COPY を確実に再実行させる
 # (BuildKit の COPY 層キャッシュが稀に誤再利用し dh-src 変更が反映されない事象の対策)。

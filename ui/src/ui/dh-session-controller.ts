@@ -125,9 +125,33 @@ export class DHSessionController {
   private player: AudioStreamPlayer | null = null;
   private callbacks: DHSessionCallbacks;
   private unmuteTimer: ReturnType<typeof setTimeout> | null = null;
+  /** タブ隠れ(親の meta:visibility_hidden)直前に avatar が active だったか。復帰時の再 mint 判定用。 */
+  private _wasAvatarActiveOnHide = false;
 
   constructor(callbacks: DHSessionCallbacks) {
     this.callbacks = callbacks;
+    // ★親(ai-meta)からの可視性通知(docs/23 一期 B・決策③):
+    //   タブ隠れ → avatar room を釈放(hideAvatar: WebRTC 切断で VM room 解放・dh-saas 配額還す)、
+    //   タブ復帰 → 隠す前に active だった時のみ再 mint(showAvatar)。Qwen WS/対話文脈は維持
+    //   (hide/showAvatar は WebRTC のみ切替=聊天は不断)。embed 元 origin は myaiportal.net/localhost に限定。
+    window.addEventListener("message", (e: MessageEvent) => {
+      const d = e.data as { type?: string } | null;
+      if (!d || typeof d !== "object") return;
+      if (d.type !== "meta:visibility_hidden" && d.type !== "meta:visibility_visible") return;
+      let host = "";
+      try { host = new URL(e.origin).hostname; } catch { return; }
+      const trusted =
+        host === "localhost" || host === "127.0.0.1" ||
+        host === "myaiportal.net" || host.endsWith(".myaiportal.net");
+      if (!trusted) return;
+      if (d.type === "meta:visibility_hidden") {
+        this._wasAvatarActiveOnHide = this.isAvatarActive();
+        if (this._wasAvatarActiveOnHide) this.hideAvatar();
+      } else if (this._wasAvatarActiveOnHide && !this.isAvatarActive()) {
+        this._wasAvatarActiveOnHide = false;
+        this.showAvatar();
+      }
+    });
   }
 
   // ---------------------------------------------------------------------------

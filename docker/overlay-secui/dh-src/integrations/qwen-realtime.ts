@@ -423,6 +423,13 @@ export class QwenRealtimeClient extends EventEmitter {
   private _pendingTtsCount = 0;
   /** When true, current response is a suppressed VAD auto-response — don't emit audio/text callbacks */
   private _suppressCurrentResponse = false;
+  /**
+   * When true, the **next** VAD auto-response is suppressed (no audio/text out).
+   * Set by {@link suppressNextResponse} — used by the transcript-fallback path
+   * (music / UI / task) which already speaks its own confirmation via HTTP TTS,
+   * so the model must NOT also speak (二重発声防止).
+   */
+  private _suppressNextRequested = false;
 
   /**
    * Guards against sending video frames before any audio has been sent.
@@ -681,6 +688,58 @@ export class QwenRealtimeClient extends EventEmitter {
       this._pendingTtsCount = Math.max(0, this._pendingTtsCount - 1);
       console.error("[Qwen] sendText failed:", err);
       return false;
+    }
+  }
+
+  /**
+   * Silently inject an out-of-band context note into the conversation WITHOUT
+   * triggering a spoken reply (`conversation.item.create` only, NO
+   * `response.create`). Used by the transcript-fallback path (music / ui /
+   * task) to tell the model *what it just did and the result*, so the avatar
+   * is **aware of tool-call status** on the next turn (e.g. can answer "did the
+   * song play?"). No `_pendingTtsCount` bump — this never produces audio.
+   *
+   * @param note - A short system-style status line (prefix e.g. "[系统]").
+   * @returns `true` if the item was queued.
+   */
+  injectContext(note: string): boolean {
+    if (!this._isConnected || !this._ws) {
+      console.warn("[Qwen] injectContext skipped — not connected");
+      return false;
+    }
+    try {
+      this._sendMessage({
+        type: "conversation.item.create",
+        item: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: note }],
+        },
+      });
+      // Deliberately NO response.create — silent context update only.
+      console.log(`[Qwen] injectContext: "${note.substring(0, 60)}"`);
+      return true;
+    } catch (err) {
+      console.error("[Qwen] injectContext failed:", err);
+      return false;
+    }
+  }
+
+  /**
+   * 転写兜底が処理を引き受けた時、モデルの**当ターン応答(音声/テキスト)を抑制**する。
+   * 兜底は自前で HTTP TTS 確認を喋る為、モデルも喋ると二重発声になる。これを防ぐ。
+   * - まだ応答が始まっていなければ、次の `response.created` で抑制フラグを立てる。
+   * - 既に応答中なら `response.cancel` で即打ち切る。
+   */
+  suppressNextResponse(): void {
+    this._suppressNextRequested = true;
+    if (this._isResponding && this._ws) {
+      try {
+        this._sendMessage({ type: "response.cancel" });
+        console.log("[Qwen] suppressNextResponse — response.cancel sent (was responding)");
+      } catch {
+        /* ignore */
+      }
     }
   }
 
@@ -1140,9 +1199,15 @@ export class QwenRealtimeClient extends EventEmitter {
         // Response lifecycle
         // -------------------------------------------------------
         case "response.created": {
+          // ★転写兜底が当ターンを処理済 → モデル応答を抑制(二重発声防止・最優先)。
+          if (this._suppressNextRequested) {
+            this._suppressNextRequested = false;
+            this._suppressCurrentResponse = true;
+            console.log("[Qwen] response.created — SUPPRESSED (fallback handled this turn)");
+          }
           // In TTS-only mode: if no pending TTS request, this is a VAD auto-response.
           // Suppress its callbacks so no unwanted audio reaches the DH engine.
-          if (this._ttsOnly && this._pendingTtsCount <= 0) {
+          else if (this._ttsOnly && this._pendingTtsCount <= 0) {
             this._suppressCurrentResponse = true;
             console.log(`[Qwen] response.created — SUPPRESSED (VAD auto, pendingTts=${this._pendingTtsCount})`);
           } else {

@@ -90,6 +90,13 @@ export interface DigitalHumanIdentity {
   relationship?: string;
 
   /**
+   * 一句話人設简述(persona_templates.description 由来)。後端が IDENTITY.md 冒頭へ
+   * `brief: ...` として注入する。lite-voice 提示が人設として折り込む唯一の源。
+   * `undefined` when not found.
+   */
+  brief?: string;
+
+  /**
    * Vibe / style description extracted from IDENTITY.md
    * (empty string when not found).
    */
@@ -248,6 +255,7 @@ export class IdentityLoader {
     const vibe = this.extractField(identity, "vibe") ?? "";
     const nickname = this.extractNickname(identity) ?? undefined;
     const relationship = this.extractRelationship(identity) ?? undefined;
+    const brief = this.extractField(identity, "brief") ?? undefined;
 
     const instructions = this.assembleInstructions(soul, identity, user, agents);
 
@@ -256,6 +264,7 @@ export class IdentityLoader {
       name,
       nickname,
       relationship,
+      brief,
       vibe,
       rawSoul: soul,
       rawIdentity: identity,
